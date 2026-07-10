@@ -1,0 +1,469 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>게이지 도안 계산기</title>
+<script crossorigin src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+<script crossorigin src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.5/babel.min.js"></script>
+<style>
+  html, body { margin:0; padding:0; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+
+<script type="text/babel" data-presets="react">
+const { useState, useMemo, useRef } = React;
+
+/* ---------- 스타일 토큰 ---------- */
+const INK = "#2B2A28";
+const BG = "#F6F4EE";
+const TEAL = "#1F6B5C";
+const MUSTARD = "#C98A2B";
+const GRID = "#D8D2C4";
+
+const CONSTRUCTIONS = [
+  { id: "raglan", label: "래글런" },
+  { id: "setin", label: "셋인 슬리브" },
+  { id: "drop", label: "드롭숄더" },
+];
+
+const COMMON_FIELDS = [
+  { key: "chest", label: "가슴둘레", unit: "sts", cmLabel: "가슴둘레(cm)", half: true },
+  { key: "totalLength", label: "총기장", unit: "rows", cmLabel: "총기장(cm)" },
+  { key: "armholeDepth", label: "진동길이", unit: "rows", cmLabel: "진동길이(cm)" },
+  { key: "shoulderWidth", label: "어깨너비", unit: "sts", cmLabel: "어깨너비(cm)" },
+  { key: "neckWidth", label: "목너비", unit: "sts", cmLabel: "목너비(cm)" },
+  { key: "sleeveLength", label: "소매길이", unit: "rows", cmLabel: "소매길이(cm)" },
+  { key: "sleeveCuff", label: "소매밑단너비", unit: "sts", cmLabel: "소매밑단너비(cm)" },
+  { key: "sleeveTop", label: "소매산너비", unit: "sts", cmLabel: "소매산너비(cm)" },
+];
+
+const EXTRA_FIELDS = {
+  raglan: [
+    { key: "raglanLine", label: "래글런선 길이", unit: "rows", cmLabel: "래글런선 길이(cm)" },
+  ],
+  setin: [
+    { key: "armholeBindOff", label: "진동 덮어씌우기", unit: "sts", cmLabel: "진동 덮어씌우기 폭(cm)" },
+  ],
+  drop: [],
+};
+
+function fieldsFor(construction) {
+  return [...COMMON_FIELDS, ...(EXTRA_FIELDS[construction] || [])];
+}
+
+function roundEven(n) {
+  const r = Math.round(n);
+  return r % 2 === 0 ? r : r + (r > n ? -1 : 1);
+}
+function toEven(n, useEven) {
+  return useEven ? roundEven(n) : Math.round(n);
+}
+function applyRepeat(n, repeat) {
+  const r = parseFloat(repeat);
+  if (!r || r <= 0) return n;
+  return Math.round(n / r) * r;
+}
+
+let uid = 1;
+function nextId() { return uid++; }
+
+function emptySize(construction) {
+  const obj = { id: nextId(), name: "", values: {} };
+  fieldsFor(construction).forEach((f) => (obj.values[f.key] = ""));
+  return obj;
+}
+
+function emptyGauge() {
+  return { sts: "20", rows: "28", unit: "10" };
+}
+
+// 콧수/단수 밀도 계산 (게이지 기준 길이 cm당)
+function density(gauge, kind) {
+  const val = parseFloat(kind === "sts" ? gauge.sts : gauge.rows) || 0;
+  const unit = parseFloat(gauge.unit) || 0;
+  if (!unit) return 0;
+  return val / unit; // per cm
+}
+
+function GaugeInput({ label, gauge, onChange }) {
+  return (
+    <div>
+      <div style={{ fontSize: 12, color: "#6b6558", marginBottom: 6 }}>{label}</div>
+      <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+        <input type="number" placeholder="콧수" value={gauge.sts} onChange={(e) => onChange({ ...gauge, sts: e.target.value })} />
+        <input type="number" placeholder="단수" value={gauge.rows} onChange={(e) => onChange({ ...gauge, rows: e.target.value })} />
+        <span style={{ fontSize: 12, color: "#8a8474", whiteSpace: "nowrap" }}>/</span>
+        <input type="number" placeholder="cm" value={gauge.unit} onChange={(e) => onChange({ ...gauge, unit: e.target.value })} style={{ maxWidth: 70 }} />
+        <span style={{ fontSize: 12, color: "#8a8474", whiteSpace: "nowrap" }}>cm</span>
+      </div>
+    </div>
+  );
+}
+
+function KnitCalculator() {
+  const [patternName, setPatternName] = useState("");
+  const [mode, setMode] = useState("A");
+  const [construction, setConstruction] = useState("raglan");
+  const [useEven, setUseEven] = useState(true);
+  const [repeat, setRepeat] = useState("");
+
+  const [baseGauge, setBaseGauge] = useState(emptyGauge());
+  const [targetGauge, setTargetGauge] = useState(emptyGauge());
+  const [sizesA, setSizesA] = useState([emptySize("raglan")]);
+
+  const [gaugeB, setGaugeB] = useState(emptyGauge());
+  const [ease, setEase] = useState("6");
+  const [sizesB, setSizesB] = useState([emptySize("raglan")]);
+
+  const [toast, setToast] = useState("");
+  const fileInputRef = useRef(null);
+
+  function showToast(msg) {
+    setToast(msg);
+    setTimeout(() => setToast(""), 2200);
+  }
+
+  function switchConstruction(id) {
+    setConstruction(id);
+    setSizesA((prev) => prev.map((s) => {
+      const v = {};
+      fieldsFor(id).forEach((f) => (v[f.key] = s.values[f.key] ?? ""));
+      return { ...s, values: v };
+    }));
+    setSizesB((prev) => prev.map((s) => {
+      const v = {};
+      fieldsFor(id).forEach((f) => (v[f.key] = s.values[f.key] ?? ""));
+      return { ...s, values: v };
+    }));
+  }
+
+  function addSize() {
+    if (mode === "A") setSizesA((p) => [...p, emptySize(construction)]);
+    else setSizesB((p) => [...p, emptySize(construction)]);
+  }
+  function duplicateSize(id) {
+    const source = mode === "A" ? sizesA : sizesB;
+    const target = source.find((s) => s.id === id);
+    if (!target) return;
+    const copy = { id: nextId(), name: target.name ? `${target.name} 복사` : "", values: { ...target.values } };
+    if (mode === "A") {
+      setSizesA((p) => {
+        const idx = p.findIndex((s) => s.id === id);
+        const next = [...p];
+        next.splice(idx + 1, 0, copy);
+        return next;
+      });
+    } else {
+      setSizesB((p) => {
+        const idx = p.findIndex((s) => s.id === id);
+        const next = [...p];
+        next.splice(idx + 1, 0, copy);
+        return next;
+      });
+    }
+    showToast("사이즈를 복사했습니다");
+  }
+  function removeSize(id) {
+    if (mode === "A") setSizesA((p) => (p.length > 1 ? p.filter((s) => s.id !== id) : p));
+    else setSizesB((p) => (p.length > 1 ? p.filter((s) => s.id !== id) : p));
+  }
+  function updateSizeName(id, name) {
+    const upd = (p) => p.map((s) => (s.id === id ? { ...s, name } : s));
+    if (mode === "A") setSizesA(upd); else setSizesB(upd);
+  }
+  function updateSizeValue(id, key, val) {
+    const upd = (p) => p.map((s) => (s.id === id ? { ...s, values: { ...s.values, [key]: val } } : s));
+    if (mode === "A") setSizesA(upd); else setSizesB(upd);
+  }
+
+  const fields = fieldsFor(construction);
+
+  const results = useMemo(() => {
+    if (mode === "A") {
+      const baseStsDensity = density(baseGauge, "sts");
+      const baseRowDensity = density(baseGauge, "rows");
+      const targetStsDensity = density(targetGauge, "sts");
+      const targetRowDensity = density(targetGauge, "rows");
+      const ratioS = baseStsDensity > 0 ? targetStsDensity / baseStsDensity : 0;
+      const ratioR = baseRowDensity > 0 ? targetRowDensity / baseRowDensity : 0;
+      return sizesA.map((s) => {
+        const out = {};
+        fields.forEach((f) => {
+          const base = parseFloat(s.values[f.key]);
+          if (isNaN(base)) { out[f.key] = null; return; }
+          const ratio = f.unit === "sts" ? ratioS : ratioR;
+          let val = base * ratio;
+          if (f.unit === "sts") { val = toEven(val, useEven); val = applyRepeat(val, repeat); }
+          else { val = Math.round(val); }
+          out[f.key] = val;
+        });
+        return { id: s.id, name: s.name, out };
+      });
+    } else {
+      const stsPerCm = density(gaugeB, "sts");
+      const rowsPerCm = density(gaugeB, "rows");
+      const easeVal = parseFloat(ease) || 0;
+      return sizesB.map((s) => {
+        const out = {};
+        fields.forEach((f) => {
+          const cm = parseFloat(s.values[f.key]);
+          if (isNaN(cm)) { out[f.key] = null; return; }
+          const adjustedCm = f.half ? (cm + easeVal) / 2 : cm;
+          const perCm = f.unit === "sts" ? stsPerCm : rowsPerCm;
+          let val = adjustedCm * perCm;
+          if (f.unit === "sts") { val = toEven(val, useEven); val = applyRepeat(val, repeat); }
+          else { val = Math.round(val); }
+          out[f.key] = val;
+        });
+        return { id: s.id, name: s.name, out };
+      });
+    }
+  }, [mode, construction, baseGauge, targetGauge, sizesA, gaugeB, ease, sizesB, useEven, repeat, fields]);
+
+  function downloadCSV() {
+    const header = ["사이즈", ...fields.map((f) => `${f.label}(${f.unit === "sts" ? "콧수" : "단수"})`)];
+    const rows = results.map((r) => [r.name || "-", ...fields.map((f) => (r.out[f.key] == null ? "" : r.out[f.key]))]);
+    const csv = [header, ...rows].map((row) => row.join(",")).join("\n");
+    const blob = new Blob(["\uFEFF" + csv], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `${patternName || "knit-calc"}-${construction}-${mode}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
+  function copyResultsToClipboard() {
+    const header = ["사이즈", ...fields.map((f) => `${f.label}(${f.unit === "sts" ? "콧수" : "단수"})`)];
+    const rows = results.map((r) => [r.name || "-", ...fields.map((f) => (r.out[f.key] == null ? "" : r.out[f.key]))]);
+    const text = [header, ...rows].map((row) => row.join("\t")).join("\n");
+    navigator.clipboard.writeText(text).then(
+      () => showToast("결과표를 클립보드에 복사했습니다 (구글시트에 붙여넣기 가능)"),
+      () => showToast("복사에 실패했습니다")
+    );
+  }
+
+  function saveSettingsJSON() {
+    const data = {
+      patternName: patternName || "이름없는 도안",
+      mode,
+      construction,
+      useEven,
+      repeat,
+      baseGauge,
+      targetGauge,
+      sizesA: sizesA.map(({ id, ...rest }) => rest),
+      gaugeB,
+      ease,
+      sizesB: sizesB.map(({ id, ...rest }) => rest),
+      savedAt: new Date().toISOString(),
+    };
+    const json = JSON.stringify(data, null, 2);
+    const blob = new Blob([json], { type: "application/json;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    const safeName = (patternName || "pattern").trim().replace(/[^a-zA-Z0-9가-힣_-]/g, "_");
+    a.href = url;
+    a.download = `${safeName}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+    showToast("도안 설정을 저장했습니다");
+  }
+
+  function triggerLoad() {
+    fileInputRef.current && fileInputRef.current.click();
+  }
+
+  function handleLoadFile(e) {
+    const file = e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (evt) => {
+      try {
+        const data = JSON.parse(evt.target.result);
+        setPatternName(data.patternName || "");
+        setMode(data.mode || "A");
+        setConstruction(data.construction || "raglan");
+        setUseEven(data.useEven ?? true);
+        setRepeat(data.repeat || "");
+        setBaseGauge(data.baseGauge || emptyGauge());
+        setTargetGauge(data.targetGauge || emptyGauge());
+        setSizesA((data.sizesA || []).map((s) => ({ id: nextId(), ...s })));
+        setGaugeB(data.gaugeB || emptyGauge());
+        setEase(data.ease ?? "6");
+        setSizesB((data.sizesB || []).map((s) => ({ id: nextId(), ...s })));
+        showToast(`"${data.patternName || "도안"}" 불러왔습니다`);
+      } catch (err) {
+        showToast("파일을 읽는 중 오류가 발생했습니다");
+      }
+    };
+    reader.readAsText(file);
+    e.target.value = "";
+  }
+
+  const currentSizes = mode === "A" ? sizesA : sizesB;
+
+  return (
+    <div style={{ background: BG, minHeight: "100vh", color: INK, fontFamily: "ui-sans-serif, system-ui" }}>
+      <style>{`
+        .disp { font-family: Georgia, 'Nanum Myeongjo', serif; }
+        .mono { font-family: ui-monospace, 'SF Mono', Menlo, monospace; }
+        .card { background:#fff; border:1px solid ${GRID}; border-radius:2px; }
+        input[type=text], input[type=number] {
+          border:1px solid ${GRID}; border-radius:2px; padding:6px 8px; width:100%;
+          font-family: ui-monospace, monospace; background:#fff; color:${INK}; box-sizing:border-box;
+        }
+        input:focus { outline:2px solid ${TEAL}; outline-offset:1px; }
+        .seg-btn { border:1px solid ${GRID}; background:#fff; color:${INK}; padding:8px 14px; cursor:pointer; font-size:14px; }
+        .seg-btn.active { background:${TEAL}; color:#fff; border-color:${TEAL}; }
+        .chip { background:${MUSTARD}; color:#fff; }
+        .ghost-btn { background:#fff; border:1px solid ${GRID}; color:${INK}; border-radius:2px; font-size:12px; padding:6px 10px; cursor:pointer; }
+        table { border-collapse: collapse; width:100%; }
+        th, td { border:1px dashed ${GRID}; padding:8px 10px; text-align:center; font-size:13px; }
+        th { background:#FBFAF6; font-weight:600; }
+        .stitch-mark::before { content:'∨ '; color:${TEAL}; }
+        .toast {
+          position:fixed; bottom:20px; left:50%; transform:translateX(-50%);
+          background:${INK}; color:#fff; padding:10px 18px; border-radius:4px; font-size:13px;
+          box-shadow:0 4px 14px rgba(0,0,0,0.2); z-index:50;
+        }
+      `}</style>
+
+      {toast && <div className="toast">{toast}</div>}
+
+      <div style={{ maxWidth: 780, margin: "0 auto", padding: "20px 16px 60px" }}>
+        <div style={{ marginBottom: 18 }}>
+          <div className="disp" style={{ fontSize: 22, fontWeight: 700 }}>게이지 도안 계산기</div>
+          <div style={{ fontSize: 13, color: "#6b6558", marginTop: 4 }}>
+            기준 도안 환산 또는 신체 치수 입력으로 사이즈별 콧수·단수를 바로 계산합니다.
+          </div>
+        </div>
+
+        {/* 도안 이름 + 저장/불러오기 */}
+        <div className="card" style={{ padding: 14, marginBottom: 16, display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
+          <input
+            type="text"
+            placeholder="도안 이름 (예: 브라보 풀오버)"
+            value={patternName}
+            onChange={(e) => setPatternName(e.target.value)}
+            style={{ maxWidth: 260 }}
+          />
+          <button className="ghost-btn" onClick={saveSettingsJSON}>💾 도안 저장 (JSON)</button>
+          <button className="ghost-btn" onClick={triggerLoad}>📂 도안 불러오기</button>
+          <input type="file" accept=".json" ref={fileInputRef} onChange={handleLoadFile} style={{ display: "none" }} />
+        </div>
+
+        <div style={{ display: "flex", gap: 0, marginBottom: 14 }}>
+          <button className={`seg-btn ${mode === "A" ? "active" : ""}`} style={{ borderRadius: "2px 0 0 2px" }} onClick={() => setMode("A")}>기준 도안 환산</button>
+          <button className={`seg-btn ${mode === "B" ? "active" : ""}`} style={{ borderRadius: "0 2px 2px 0", marginLeft: -1 }} onClick={() => setMode("B")}>신체 치수 계산</button>
+        </div>
+
+        <div style={{ display: "flex", gap: 6, marginBottom: 16, flexWrap: "wrap" }}>
+          {CONSTRUCTIONS.map((c) => (
+            <button key={c.id} className="seg-btn" style={{ borderRadius: 2, background: construction === c.id ? MUSTARD : "#fff", color: construction === c.id ? "#fff" : INK, borderColor: construction === c.id ? MUSTARD : GRID }} onClick={() => switchConstruction(c.id)}>{c.label}</button>
+          ))}
+        </div>
+
+        <div className="card" style={{ padding: 16, marginBottom: 16 }}>
+          {mode === "A" ? (
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
+              <GaugeInput label="기준 도안 게이지 (콧수 / 단수 / 기준 길이)" gauge={baseGauge} onChange={setBaseGauge} />
+              <GaugeInput label="내 게이지 (콧수 / 단수 / 기준 길이)" gauge={targetGauge} onChange={setTargetGauge} />
+            </div>
+          ) : (
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
+              <GaugeInput label="내 게이지 (콧수 / 단수 / 기준 길이)" gauge={gaugeB} onChange={setGaugeB} />
+              <div>
+                <div style={{ fontSize: 12, color: "#6b6558", marginBottom: 6 }}>여유분 (cm, 가슴둘레에 적용)</div>
+                <input type="number" value={ease} onChange={(e) => setEase(e.target.value)} />
+              </div>
+            </div>
+          )}
+
+          <div style={{ display: "flex", gap: 20, marginTop: 14, alignItems: "center", flexWrap: "wrap" }}>
+            <label style={{ fontSize: 13, display: "flex", alignItems: "center", gap: 6 }}>
+              <input type="checkbox" checked={useEven} onChange={(e) => setUseEven(e.target.checked)} style={{ width: "auto" }} />
+              콧수 짝수로 반올림
+            </label>
+            <label style={{ fontSize: 13, display: "flex", alignItems: "center", gap: 6 }}>
+              패턴 반복수(콧수)
+              <input type="number" placeholder="예: 8" value={repeat} onChange={(e) => setRepeat(e.target.value)} style={{ width: 70 }} />
+            </label>
+          </div>
+          <div style={{ fontSize: 11, color: "#8a8474", marginTop: 10 }}>
+            * 게이지는 "콧수/단수가 몇 cm 안에서 나오는지"를 직접 입력합니다. 10cm 기준이면 10, 4인치(약 10.16cm) 기준이면 10.16, 다른 길이면 그 값을 그대로 넣으면 됩니다.
+          </div>
+        </div>
+
+        <div style={{ marginBottom: 10, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+          <div className="disp stitch-mark" style={{ fontSize: 15, fontWeight: 700 }}>사이즈별 입력</div>
+          <button className="seg-btn" style={{ borderRadius: 2, fontSize: 12, padding: "5px 10px" }} onClick={addSize}>+ 사이즈 추가</button>
+        </div>
+
+        <div style={{ display: "flex", flexDirection: "column", gap: 10, marginBottom: 20 }}>
+          {currentSizes.map((s) => (
+            <div key={s.id} className="card" style={{ padding: 12 }}>
+              <div style={{ display: "flex", gap: 8, marginBottom: 8, alignItems: "center" }}>
+                <input type="text" placeholder="사이즈명 (예: Size 3)" value={s.name} onChange={(e) => updateSizeName(s.id, e.target.value)} style={{ maxWidth: 200 }} />
+                <button className="ghost-btn" onClick={() => duplicateSize(s.id)}>⧉ 복사</button>
+                <button onClick={() => removeSize(s.id)} style={{ background: "none", border: "none", color: "#a33", cursor: "pointer", fontSize: 12 }}>삭제</button>
+              </div>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(140px, 1fr))", gap: 8 }}>
+                {fields.map((f) => (
+                  <div key={f.key}>
+                    <div style={{ fontSize: 11, color: "#6b6558", marginBottom: 3 }}>
+                      {mode === "A" ? `${f.label} (${f.unit === "sts" ? "콧수" : "단수"})` : f.cmLabel}
+                    </div>
+                    <input type="number" value={s.values[f.key]} onChange={(e) => updateSizeValue(s.id, f.key, e.target.value)} />
+                  </div>
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
+
+        <div style={{ marginBottom: 10, display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8 }}>
+          <div className="disp stitch-mark" style={{ fontSize: 15, fontWeight: 700 }}>계산 결과</div>
+          <div style={{ display: "flex", gap: 8 }}>
+            <button className="ghost-btn" onClick={copyResultsToClipboard}>⧉ 결과표 복사</button>
+            <button className="chip" style={{ border: "none", borderRadius: 2, fontSize: 12, padding: "6px 12px", cursor: "pointer" }} onClick={downloadCSV}>CSV 다운로드</button>
+          </div>
+        </div>
+
+        <div className="card" style={{ padding: 12, overflowX: "auto" }}>
+          <table>
+            <thead>
+              <tr>
+                <th>사이즈</th>
+                {fields.map((f) => (<th key={f.key}>{f.label}<br /><span style={{ fontSize: 10, color: "#8a8474" }}>{f.unit === "sts" ? "콧수" : "단수"}</span></th>))}
+              </tr>
+            </thead>
+            <tbody>
+              {results.map((r) => (
+                <tr key={r.id}>
+                  <td style={{ fontWeight: 600 }}>{r.name || "-"}</td>
+                  {fields.map((f) => (<td key={f.key} className="mono">{r.out[f.key] == null ? "—" : r.out[f.key]}</td>))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+
+        <div style={{ fontSize: 11, color: "#8a8474", marginTop: 14, lineHeight: 1.6 }}>
+          * 셋인 슬리브의 진동 셰이핑, 래글런 감소 배치 등 세부 코 감소 진행은 스와치 확인 후 조정하는 것을 권장합니다.<br />
+          * 도안 저장은 브라우저에 남지 않고 파일(JSON)로 다운로드됩니다 — 도안별로 파일을 따로 보관하면 그 자체가 버전 관리가 됩니다. GitHub에 올리면 각 파일의 수정 이력도 자동으로 남습니다.
+        </div>
+      </div>
+    </div>
+  );
+}
+
+const root = ReactDOM.createRoot(document.getElementById("root"));
+root.render(<KnitCalculator />);
+</script>
+</body>
+</html>
