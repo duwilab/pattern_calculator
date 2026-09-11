@@ -10,6 +10,7 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.5/babel.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <style>
   :root {
     --ink:#000000; --canvas:#ffffff; --hairline:#e6e6e6; --hairline-soft:#f1f1f1; --surface-soft:#f7f7f5;
@@ -405,6 +406,47 @@ function App() {
     navigator.clipboard.writeText(text).then(() => alert("결과가 클립보드에 복사되었습니다. 구글시트에 붙여넣기 하세요."));
   }
 
+  function exportExcel() {
+    if (!window.XLSX) { alert("엑셀 기능을 불러오지 못했습니다. 인터넷 연결을 확인한 뒤 새로고침해주세요."); return; }
+    const header = [
+      "사이즈",
+      ...fields.map((f) => (mode === "A" ? f.label : f.cmLabel) + " (입력)"),
+      ...fields.map((f) => f.label + " (" + (f.unit === "sts" ? "콧수" : "단수") + ", 결과)"),
+    ];
+    const rows = sizes.map((s, i) => [
+      s.name,
+      ...fields.map((f) => s.values[f.key] ?? ""),
+      ...fields.map((f) => results[i].values[f.key] ?? ""),
+    ]);
+    const infoRows = [
+      ["도안 이름", patternName || ""],
+      ["구성", (CONSTRUCTIONS.find((c) => c.id === construction) || {}).label || construction],
+      ["계산 모드", mode === "A" ? "기준 도안 스케일링" : "신체 치수 기반"],
+    ];
+    if (mode === "A") {
+      infoRows.push(
+        ["기준 도안 게이지 - 콧수", baseGauge.stitchCount], ["기준 도안 게이지 - 콧수 기준길이(cm)", baseGauge.stitchBaseLength],
+        ["기준 도안 게이지 - 단수", baseGauge.rowCount], ["기준 도안 게이지 - 단수 기준길이(cm)", baseGauge.rowBaseLength],
+        ["내 게이지 - 콧수", targetGauge.stitchCount], ["내 게이지 - 콧수 기준길이(cm)", targetGauge.stitchBaseLength],
+        ["내 게이지 - 단수", targetGauge.rowCount], ["내 게이지 - 단수 기준길이(cm)", targetGauge.rowBaseLength]
+      );
+    } else {
+      infoRows.push(
+        ["내 게이지 - 콧수", gaugeB.stitchCount], ["내 게이지 - 콧수 기준길이(cm)", gaugeB.stitchBaseLength],
+        ["내 게이지 - 단수", gaugeB.rowCount], ["내 게이지 - 단수 기준길이(cm)", gaugeB.rowBaseLength],
+        ["여유분(cm)", ease]
+      );
+    }
+    infoRows.push(["짝수 반올림", useEven ? "예" : "아니오"], ["패턴 반복수", repeat || ""]);
+
+    const wsInfo = XLSX.utils.aoa_to_sheet(infoRows);
+    const wsData = XLSX.utils.aoa_to_sheet([header, ...rows]);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, wsInfo, "도안 정보");
+    XLSX.utils.book_append_sheet(wb, wsData, "사이즈별 계산");
+    XLSX.writeFile(wb, (patternName || "pattern") + ".xlsx");
+  }
+
   function saveJSON() {
     const data = {
       patternName, construction, mode, baseGauge, targetGauge, gaugeB, ease, useEven, repeat,
@@ -567,7 +609,10 @@ function App() {
           <div className="block" style={{ background: C.lime, padding: 32 }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14, flexWrap: "wrap", gap: 10 }}>
               <div className="card-title">계산 결과</div>
-              <PillButton variant="primary" onClick={copyResults}>결과 복사</PillButton>
+              <div style={{ display: "flex", gap: 8 }}>
+                <PillButton variant="secondary" onClick={copyResults}>결과 복사</PillButton>
+                <PillButton variant="primary" onClick={exportExcel}>엑셀로 다운로드</PillButton>
+              </div>
             </div>
             <table style={{ background: "transparent" }}>
               <thead>
