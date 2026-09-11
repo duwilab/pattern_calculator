@@ -178,6 +178,21 @@ function densityOf(gauge, axis) {
 let idSeq = 1;
 function nextId() { return "id" + (idSeq++) + "_" + Math.random().toString(36).slice(2, 7); }
 
+const TARGET_FIELDS = [
+  { key: "chest", label: "가슴둘레", axis: "h", unit: "sts" },
+  { key: "totalLength", label: "총기장", axis: "v", unit: "rows" },
+  { key: "armholeDepth", label: "진동길이", axis: "v", unit: "rows" },
+];
+function cmFromCount(count, axis, gauge) {
+  const density = densityOf(gauge, axis);
+  return density > 0 ? count / density : 0;
+}
+function countFromCm(cm, axis, gauge, unit, useEven) {
+  const density = densityOf(gauge, axis);
+  const raw = cm * density;
+  return unit === "sts" ? toStitchCount(raw, useEven) : Math.round(raw);
+}
+
 function emptyGauge() {
   return { stitchCount: "", stitchBaseLength: "10", rowCount: "", rowBaseLength: "10" };
 }
@@ -329,6 +344,54 @@ function ScanImportPanel({ sizes, fields, onApply, onClose }) {
   );
 }
 
+function TargetGoalsCard({ sizes, myGauge, useEven, onCmChange, onCountChange }) {
+  return (
+    <div className="card" style={{ padding: 20, marginBottom: 20, overflowX: "auto" }}>
+      <div className="card-title" style={{ marginBottom: 4 }}>사이즈별 목표 치수 (cm ↔ 콧수/단수)</div>
+      <div className="caption" style={{ marginBottom: 14, textTransform: "none", fontSize: 11, color: "#8a8474" }}>
+        cm 목표를 정하면 내 게이지 기준 콧수/단수를 바로 보여주고, 반대로 콧수/단수를 넣으면 몇 cm인지도 즉시 계산돼요. (현재 선택된 "내 게이지" 기준)
+      </div>
+      <table>
+        <thead>
+          <tr>
+            <th style={{ minWidth: 120 }}>사이즈</th>
+            {TARGET_FIELDS.map((f) => (
+              <React.Fragment key={f.key}>
+                <th style={{ minWidth: 100 }}>{f.label} (cm)</th>
+                <th style={{ minWidth: 100 }}>{f.label} ({f.unit === "sts" ? "콧수" : "단수"})</th>
+              </React.Fragment>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {sizes.map((s) => (
+            <tr key={s.id}>
+              <td>{s.name}</td>
+              {TARGET_FIELDS.map((f) => {
+                const cmVal = s.values["goal_" + f.key + "_cm"] ?? "";
+                const countVal = s.values["goal_" + f.key + "_count"] ?? "";
+                return (
+                  <React.Fragment key={f.key}>
+                    <td>
+                      <input type="number" value={cmVal}
+                        onChange={(e) => onCmChange(s.id, f, e.target.value)} placeholder="cm" />
+                    </td>
+                    <td>
+                      <input type="number" value={countVal}
+                        onChange={(e) => onCountChange(s.id, f, e.target.value)} placeholder={f.unit === "sts" ? "콧수" : "단수"} />
+                    </td>
+                  </React.Fragment>
+                );
+              })}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+
 function App() {
   const [patternName, setPatternName] = useState("");
   const [construction, setConstruction] = useState("raglan");
@@ -342,6 +405,10 @@ function App() {
   const [sizes, setSizes] = useState([emptySize("Size 1")]);
   const [activeTab, setActiveTab] = useState("calc");
   const [scanOpen, setScanOpen] = useState(false);
+  const [quickValue, setQuickValue] = useState("");
+  const [quickUnit, setQuickUnit] = useState("sts");
+  const [quickCmValue, setQuickCmValue] = useState("");
+  const [quickCmUnit, setQuickCmUnit] = useState("sts");
   const fileInputRef = useRef(null);
 
   const fields = fieldsFor(construction);
@@ -369,6 +436,43 @@ function App() {
   function removeSize(id) {
     setSizes((prev) => (prev.length > 1 ? prev.filter((s) => s.id !== id) : prev));
   }
+
+  const myGauge = mode === "A" ? targetGauge : gaugeB;
+
+  function handleGoalCmChange(sizeId, field, val) {
+    const cmNum = Number(val) || 0;
+    const countVal = val === "" ? "" : String(countFromCm(cmNum, field.axis, myGauge, field.unit, useEven));
+    setSizes((prev) => prev.map((s) => (s.id === sizeId ? {
+      ...s,
+      values: { ...s.values, ["goal_" + field.key + "_cm"]: val, ["goal_" + field.key + "_count"]: countVal },
+    } : s)));
+  }
+  function handleGoalCountChange(sizeId, field, val) {
+    const countNum = Number(val) || 0;
+    const cmVal = val === "" ? "" : String(Math.round(cmFromCount(countNum, field.axis, myGauge) * 10) / 10);
+    setSizes((prev) => prev.map((s) => (s.id === sizeId ? {
+      ...s,
+      values: { ...s.values, ["goal_" + field.key + "_count"]: val, ["goal_" + field.key + "_cm"]: cmVal },
+    } : s)));
+  }
+
+  const quickResult = useMemo(() => {
+    const raw = Number(quickValue);
+    if (!quickValue || (!raw && raw !== 0)) return "";
+    const axis = quickUnit === "sts" ? "h" : "v";
+    const baseDensity = densityOf(baseGauge, axis);
+    const targetDensity = densityOf(targetGauge, axis);
+    const cm = baseDensity > 0 ? raw / baseDensity : 0;
+    const newVal = cm * targetDensity;
+    return quickUnit === "sts" ? toStitchCount(newVal, useEven) : Math.round(newVal);
+  }, [quickValue, quickUnit, baseGauge, targetGauge, useEven]);
+
+  const quickCmResult = useMemo(() => {
+    const raw = Number(quickCmValue);
+    if (!quickCmValue || (!raw && raw !== 0)) return "";
+    const axis = quickCmUnit === "sts" ? "h" : "v";
+    return countFromCm(raw, axis, myGauge, quickCmUnit, useEven);
+  }, [quickCmValue, quickCmUnit, myGauge, useEven]);
 
   const results = useMemo(() => {
     return sizes.map((size) => {
@@ -534,9 +638,22 @@ function App() {
 
           <div className="card" style={{ padding: 20, marginBottom: 20 }}>
             {mode === "A" ? (
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 24 }}>
-                <GaugeInput label="기준 도안 게이지" gauge={baseGauge} onChange={setBaseGauge} />
-                <GaugeInput label="내 게이지" gauge={targetGauge} onChange={setTargetGauge} />
+              <div>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 24 }}>
+                  <GaugeInput label="기준 도안 게이지" gauge={baseGauge} onChange={setBaseGauge} />
+                  <GaugeInput label="내 게이지" gauge={targetGauge} onChange={setTargetGauge} />
+                </div>
+                <div style={{ background: C.surfaceSoft, borderRadius: 8, padding: 14, marginTop: 18 }}>
+                  <div className="card-title" style={{ fontSize: 13, marginBottom: 10 }}>빠른 환산 (참고 도안 콧수/단수 → 내 게이지)</div>
+                  <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+                    <PillButton variant={quickUnit === "sts" ? "selected" : "unselected"} style={{ padding: "7px 14px", fontSize: 12 }} onClick={() => setQuickUnit("sts")}>콧수</PillButton>
+                    <PillButton variant={quickUnit === "rows" ? "selected" : "unselected"} style={{ padding: "7px 14px", fontSize: 12 }} onClick={() => setQuickUnit("rows")}>단수</PillButton>
+                    <input type="number" value={quickValue} onChange={(e) => setQuickValue(e.target.value)} placeholder="참고 도안 값 (예: 45)" style={{ width: 160 }} />
+                    <span style={{ fontSize: 14 }}>→</span>
+                    <span style={{ fontSize: 20, fontWeight: 700 }}>{quickResult === "" ? "-" : quickResult}</span>
+                    <span style={{ fontSize: 13, color: "#55524a" }}>{quickUnit === "sts" ? "콧수" : "단수"} (내 게이지 기준)</span>
+                  </div>
+                </div>
               </div>
             ) : (
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 24 }}>
@@ -544,6 +661,21 @@ function App() {
                 <Field label="여유분 (cm, 가슴둘레에 적용)"><input type="number" value={ease} onChange={(e) => setEase(e.target.value)} /></Field>
               </div>
             )}
+
+            <div style={{ background: C.mint, borderRadius: 8, padding: 14, marginTop: 18 }}>
+              <div className="card-title" style={{ fontSize: 13, marginBottom: 10 }}>빠른 환산 (cm → 콧수/단수)</div>
+              <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+                <PillButton variant={quickCmUnit === "sts" ? "selected" : "unselected"} style={{ padding: "7px 14px", fontSize: 12 }} onClick={() => setQuickCmUnit("sts")}>콧수</PillButton>
+                <PillButton variant={quickCmUnit === "rows" ? "selected" : "unselected"} style={{ padding: "7px 14px", fontSize: 12 }} onClick={() => setQuickCmUnit("rows")}>단수</PillButton>
+                <input type="number" value={quickCmValue} onChange={(e) => setQuickCmValue(e.target.value)} placeholder="원하는 길이 (cm, 예: 50)" style={{ width: 170 }} />
+                <span style={{ fontSize: 14 }}>→</span>
+                <span style={{ fontSize: 20, fontWeight: 700 }}>{quickCmResult === "" ? "-" : quickCmResult}</span>
+                <span style={{ fontSize: 13, color: "#55524a" }}>{quickCmUnit === "sts" ? "콧수" : "단수"} (내 게이지 기준)</span>
+              </div>
+              <div className="caption" style={{ marginTop: 8, textTransform: "none", fontSize: 11, color: "#55524a" }}>
+                전체 구조(가슴둘레·기장 등)를 cm로 먼저 정할 때 바로 콧수/단수로 확인해보는 용도예요.
+              </div>
+            </div>
             <div style={{ display: "flex", gap: 20, marginTop: 18, alignItems: "center", flexWrap: "wrap" }}>
               <label style={{ fontSize: 13, display: "flex", alignItems: "center", gap: 6 }}>
                 <input type="checkbox" checked={useEven} onChange={(e) => setUseEven(e.target.checked)} style={{ width: "auto" }} />
@@ -559,6 +691,8 @@ function App() {
               {mode === "A" ? "아래 표에는 기준 도안의 실제 콧수/단수를 입력하세요." : "아래 표에는 원하는 신체 치수(cm)를 입력하세요."}
             </div>
           </div>
+
+          <TargetGoalsCard sizes={sizes} myGauge={myGauge} useEven={useEven} onCmChange={handleGoalCmChange} onCountChange={handleGoalCountChange} />
 
           <div className="card" style={{ padding: 20, marginBottom: 20, overflowX: "auto" }}>
             <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: scanOpen ? 0 : 16 }}>
@@ -622,10 +756,29 @@ function App() {
                 </tr>
               </thead>
               <tbody>
-                {results.map((r) => (
+                {results.map((r, i) => (
                   <tr key={r.id}>
                     <td style={{ borderBottom: "1px solid rgba(0,0,0,0.15)" }}>{r.name}</td>
-                    {fields.map((f) => <td key={f.key} style={{ borderBottom: "1px solid rgba(0,0,0,0.15)" }}>{r.values[f.key]}</td>)}
+                    {fields.map((f) => {
+                      const val = r.values[f.key];
+                      let pct = null;
+                      if (i > 0) {
+                        const prevVal = results[i - 1].values[f.key];
+                        if (typeof val === "number" && typeof prevVal === "number" && prevVal !== 0) {
+                          pct = ((val - prevVal) / prevVal) * 100;
+                        }
+                      }
+                      return (
+                        <td key={f.key} style={{ borderBottom: "1px solid rgba(0,0,0,0.15)" }}>
+                          <div>{val}</div>
+                          {pct !== null && (
+                            <div style={{ fontSize: 10, marginTop: 2, color: pct >= 0 ? "#1a6b3a" : "#a8412a" }}>
+                              {pct >= 0 ? "+" : ""}{pct.toFixed(1)}% (이전 사이즈比)
+                            </div>
+                          )}
+                        </td>
+                      );
+                    })}
                   </tr>
                 ))}
               </tbody>
