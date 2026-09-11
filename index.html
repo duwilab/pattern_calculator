@@ -22,8 +22,8 @@
   html, body { margin:0; padding:0; background:var(--canvas); color:var(--ink); }
   body { font-family:'Pretendard', -apple-system, "Malgun Gothic", sans-serif; }
   .ff-mono { font-family:'Pretendard', monospace; }
-  .eyebrow { font-family:'Pretendard', monospace; text-transform:uppercase; font-size:13px; font-weight:400; letter-spacing:0.5px; color:var(--ink); }
-  .caption { font-family:'Pretendard', monospace; text-transform:uppercase; font-size:11px; font-weight:400; letter-spacing:0.5px; color:#55524a; }
+  .eyebrow { font-family:'Pretendard', monospace; font-size:13px; font-weight:400; letter-spacing:0.5px; color:var(--ink); }
+  .caption { font-family:'Pretendard', monospace; font-size:11px; font-weight:400; letter-spacing:0.5px; color:#55524a; }
   .headline { font-size:24px; font-weight:540; line-height:1.3; letter-spacing:-0.2px; }
   .card-title { font-size:17px; font-weight:700; line-height:1.4; }
   .body-sm { font-size:13px; font-weight:330; line-height:1.5; }
@@ -35,7 +35,7 @@
   button { font-family:'Pretendard', sans-serif; cursor:pointer; }
   table { border-collapse: collapse; width:100%; }
   th, td { border-bottom:1px solid var(--hairline-soft); padding:8px; font-size:13px; text-align:center; }
-  th { font-family:'Pretendard', monospace; text-transform:uppercase; font-size:11px; font-weight:400; letter-spacing:0.4px; color:#55524a; border-bottom:1px solid var(--ink); }
+  th { font-family:'Pretendard', monospace; font-size:11px; font-weight:400; letter-spacing:0.4px; color:#55524a; border-bottom:1px solid var(--ink); }
   .card { background:var(--surface-soft); border:1px solid var(--hairline); border-radius:var(--r-md); }
   .block { border-radius:var(--r-lg); }
   ::-webkit-scrollbar { width:8px; height:8px; }
@@ -192,6 +192,15 @@ function countFromCm(cm, axis, gauge, unit, useEven) {
   const raw = cm * density;
   return unit === "sts" ? toStitchCount(raw, useEven) : Math.round(raw);
 }
+// 신체 치수 기반(모드 B)에서 여유분은 가슴둘레에만 적용. cm↔콧수 변환 어디서든 이 두 함수로 통일해서 계산 어긋남을 방지.
+function bodyCmToCount(cm, fieldKey, axis, gauge, unit, ease, useEven) {
+  const easeAdj = fieldKey === "chest" ? (Number(ease) || 0) : 0;
+  return countFromCm(Number(cm) + easeAdj, axis, gauge, unit, useEven);
+}
+function bodyCountToCm(count, fieldKey, axis, gauge, ease) {
+  const easeAdj = fieldKey === "chest" ? (Number(ease) || 0) : 0;
+  return cmFromCount(Number(count), axis, gauge) - easeAdj;
+}
 
 function emptyGauge() {
   return { stitchCount: "", stitchBaseLength: "10", rowCount: "", rowBaseLength: "10" };
@@ -239,7 +248,7 @@ function ScanImportPanel({ sizes, fields, onApply, onClose }) {
   async function handlePdf(e) {
     const file = e.target.files[0];
     if (!file) return;
-    setStatus("PDF 읽는 중...");
+    setStatus("pdf 읽는 중...");
     setFoundPreview(null);
     try {
       const buf = await file.arrayBuffer();
@@ -253,7 +262,7 @@ function ScanImportPanel({ sizes, fields, onApply, onClose }) {
       setExtractedText(fullText.trim());
       setStatus("추출 완료. 아래 텍스트를 확인한 뒤 자동 채우기를 시도하세요.");
     } catch (err) {
-      setStatus("PDF를 읽는 중 오류가 발생했습니다. 텍스트가 포함된 PDF인지 확인해주세요.");
+      setStatus("pdf를 읽는 중 오류가 발생했습니다. 텍스트가 포함된 pdf인지 확인해주세요.");
     }
     e.target.value = "";
   }
@@ -289,7 +298,7 @@ function ScanImportPanel({ sizes, fields, onApply, onClose }) {
   return (
     <div style={{ border: "1px solid " + C.hairline, borderRadius: 8, padding: 16, marginBottom: 16, background: "#fff" }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
-        <div className="card-title" style={{ fontSize: 14 }}>PDF / 이미지로 자동 입력</div>
+        <div className="card-title" style={{ fontSize: 14 }}>pdf / 이미지로 자동 입력</div>
         <PillButton variant="secondary" style={{ padding: "5px 12px", fontSize: 11 }} onClick={onClose}>닫기</PillButton>
       </div>
 
@@ -303,7 +312,7 @@ function ScanImportPanel({ sizes, fields, onApply, onClose }) {
       </div>
 
       <div style={{ display: "flex", gap: 8, marginBottom: 10, flexWrap: "wrap" }}>
-        <PillButton variant="secondary" onClick={() => pdfInputRef.current.click()}>기존 도안 PDF 업로드</PillButton>
+        <PillButton variant="secondary" onClick={() => pdfInputRef.current.click()}>기존 도안 pdf 업로드</PillButton>
         <input ref={pdfInputRef} type="file" accept="application/pdf" style={{ display: "none" }} onChange={handlePdf} />
         <PillButton variant="secondary" onClick={() => imgInputRef.current.click()}>기성품 사이즈 이미지 업로드</PillButton>
         <input ref={imgInputRef} type="file" accept="image/*" style={{ display: "none" }} onChange={handleImage} />
@@ -338,7 +347,7 @@ function ScanImportPanel({ sizes, fields, onApply, onClose }) {
       )}
 
       <div className="caption" style={{ marginTop: 12, textTransform: "none", fontSize: 11, color: "#8a8474" }}>
-        PDF/이미지 인식은 완벽하지 않을 수 있어요. 적용 후 표에서 값을 다시 한 번 확인해주세요. 문서가 실제 콧수/단수인지, 실측 cm인지에 맞춰 위쪽의 계산 모드(기준 도안 스케일링 / 신체 치수 기반)를 선택해주세요.
+        pdf/이미지 인식은 완벽하지 않을 수 있어요. 적용 후 표에서 값을 다시 한 번 확인해주세요. 문서가 실제 콧수/단수인지, 실측 cm인지에 맞춰 위쪽의 계산 모드(기준 도안 스케일링 / 신체 치수 기반)를 선택해주세요.
       </div>
     </div>
   );
@@ -358,7 +367,7 @@ function TargetGoalsCard({ sizes, myGauge, useEven, onCmChange, onCountChange })
             {TARGET_FIELDS.map((f) => (
               <React.Fragment key={f.key}>
                 <th style={{ minWidth: 100 }}>{f.label} (cm)</th>
-                <th style={{ minWidth: 100 }}>{f.label} ({f.unit === "sts" ? "콧수" : "단수"})</th>
+                <th style={{ minWidth: 100 }}>{f.label} ({f.unit === "sts" ? "sts" : "rows"})</th>
               </React.Fragment>
             ))}
           </tr>
@@ -391,7 +400,7 @@ function TargetGoalsCard({ sizes, myGauge, useEven, onCmChange, onCountChange })
                     </td>
                     <td>
                       <input type="number" value={countVal}
-                        onChange={(e) => onCountChange(s.id, f, e.target.value)} placeholder={f.unit === "sts" ? "콧수" : "단수"} />
+                        onChange={(e) => onCountChange(s.id, f, e.target.value)} placeholder={f.unit === "sts" ? "sts" : "rows"} />
                       {countPct !== null && (
                         <div style={{ fontSize: 10, marginTop: 3, color: countPct >= 0 ? "#1a6b3a" : "#a8412a" }}>
                           {countPct >= 0 ? "+" : ""}{countPct.toFixed(1)}%
@@ -420,7 +429,7 @@ function App() {
   const [ease, setEase] = useState("0");
   const [useEven, setUseEven] = useState(true);
   const [repeat, setRepeat] = useState("");
-  const [sizes, setSizes] = useState([emptySize("Size 1")]);
+  const [sizes, setSizes] = useState([emptySize("size 1")]);
   const [activeTab, setActiveTab] = useState("calc");
   const [scanOpen, setScanOpen] = useState(false);
   const [quickValue, setQuickValue] = useState("");
@@ -429,7 +438,7 @@ function App() {
   const [quickCmUnit, setQuickCmUnit] = useState("sts");
   const fileInputRef = useRef(null);
 
-  const fields = fieldsFor(construction);
+  const fields = mode === "A" ? fieldsFor(construction) : COMMON_FIELDS;
 
   function updateSizeValue(id, key, val) {
     setSizes((prev) => prev.map((s) => {
@@ -439,7 +448,7 @@ function App() {
         const f = TARGET_FIELDS.find((tf) => tf.key === key);
         if (f) {
           newValues["goal_" + key + "_cm"] = val;
-          newValues["goal_" + key + "_count"] = val === "" ? "" : String(countFromCm(Number(val) || 0, f.axis, gaugeB, f.unit, useEven));
+          newValues["goal_" + key + "_count"] = val === "" ? "" : String(bodyCmToCount(val, key, f.axis, gaugeB, f.unit, ease, useEven));
         }
       }
       return { ...s, values: newValues };
@@ -449,7 +458,7 @@ function App() {
     setSizes((prev) => prev.map((s) => (s.id === id ? { ...s, name } : s)));
   }
   function addSize() {
-    setSizes((prev) => [...prev, emptySize("Size " + (prev.length + 1))]);
+    setSizes((prev) => [...prev, emptySize("size " + (prev.length + 1))]);
   }
   function duplicateSize(id) {
     setSizes((prev) => {
@@ -469,8 +478,8 @@ function App() {
   const myGauge = mode === "A" ? targetGauge : gaugeB;
 
   function handleGoalCmChange(sizeId, field, val) {
-    const cmNum = Number(val) || 0;
-    const countVal = val === "" ? "" : String(countFromCm(cmNum, field.axis, myGauge, field.unit, useEven));
+    const effectiveEase = mode === "B" ? ease : 0;
+    const countVal = val === "" ? "" : String(bodyCmToCount(val, field.key, field.axis, myGauge, field.unit, effectiveEase, useEven));
     const isSynced = mode === "B" && ["chest", "totalLength", "armholeDepth"].includes(field.key);
     setSizes((prev) => prev.map((s) => {
       if (s.id !== sizeId) return s;
@@ -480,8 +489,9 @@ function App() {
     }));
   }
   function handleGoalCountChange(sizeId, field, val) {
+    const effectiveEase = mode === "B" ? ease : 0;
     const countNum = Number(val) || 0;
-    const cmVal = val === "" ? "" : String(Math.round(cmFromCount(countNum, field.axis, myGauge) * 10) / 10);
+    const cmVal = val === "" ? "" : String(Math.round(bodyCountToCm(countNum, field.key, field.axis, myGauge, effectiveEase) * 10) / 10);
     const isSynced = mode === "B" && ["chest", "totalLength", "armholeDepth"].includes(field.key);
     setSizes((prev) => prev.map((s) => {
       if (s.id !== sizeId) return s;
@@ -515,24 +525,18 @@ function App() {
       fields.forEach((f) => {
         const raw = Number(size.values[f.key]);
         if (!raw && raw !== 0) { out.values[f.key] = ""; return; }
-        let cm, newVal;
+        let v;
         if (mode === "A") {
           const baseDensity = densityOf(baseGauge, f.axis);
           const targetDensity = densityOf(targetGauge, f.axis);
-          cm = baseDensity > 0 ? raw / baseDensity : 0;
-          newVal = cm * targetDensity;
+          const cm = baseDensity > 0 ? raw / baseDensity : 0;
+          const newVal = cm * targetDensity;
+          v = f.unit === "sts" ? toStitchCount(newVal, useEven) : Math.round(newVal);
         } else {
-          const density = densityOf(gaugeB, f.axis);
-          cm = raw + (f.key === "chest" ? Number(ease || 0) : 0);
-          newVal = cm * density;
+          v = bodyCmToCount(raw, f.key, f.axis, gaugeB, f.unit, ease, useEven);
         }
-        if (f.unit === "sts") {
-          let v = toStitchCount(newVal, useEven);
-          if (f.key === "chest" && repeat) v = snapToRepeat(v, repeat);
-          out.values[f.key] = v;
-        } else {
-          out.values[f.key] = Math.round(newVal);
-        }
+        if (f.unit === "sts" && f.key === "chest" && repeat) v = snapToRepeat(v, repeat);
+        out.values[f.key] = v;
       });
       return out;
     });
@@ -550,7 +554,7 @@ function App() {
     const header = [
       "사이즈",
       ...fields.map((f) => (mode === "A" ? f.label : f.cmLabel) + " (입력)"),
-      ...fields.map((f) => f.label + " (" + (f.unit === "sts" ? "콧수" : "단수") + ", 결과)"),
+      ...fields.map((f) => f.label + " (" + (f.unit === "sts" ? "sts" : "rows") + ", 결과)"),
     ];
     const rows = sizes.map((s, i) => [
       s.name,
@@ -633,20 +637,20 @@ function App() {
     setGaugeB(emptyGauge());
     setEase("0");
     setRepeat("");
-    setSizes([emptySize("Size 1")]);
+    setSizes([emptySize("size 1")]);
   }
 
   return (
     <div style={{ maxWidth: 1080, margin: "0 auto", padding: "40px 24px 80px" }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", marginBottom: 28, flexWrap: "wrap", gap: 16 }}>
         <div>
-          <div className="eyebrow" style={{ marginBottom: 6 }}>Knit Pattern Tool</div>
+          <div className="eyebrow" style={{ marginBottom: 6 }}>knit pattern tool</div>
           <div className="headline">게이지 도안 계산기</div>
-          <div className="body-sm" style={{ color: "#55524a", marginTop: 4 }}>도안별 저장 · 게이지 자유 입력 · 저먼 숏로우 계산</div>
+          <div className="body-sm" style={{ color: "#55524a", marginTop: 4 }}>도안별 저장 · 게이지 자유 입력 · 경사뜨기 배분 계산</div>
         </div>
         <div style={{ display: "flex", gap: 8 }}>
           <PillButton variant={activeTab === "calc" ? "selected" : "unselected"} onClick={() => setActiveTab("calc")}>계산기</PillButton>
-          <PillButton variant={activeTab === "shortrow" ? "selected" : "unselected"} onClick={() => setActiveTab("shortrow")}>저먼 숏로우</PillButton>
+          <PillButton variant={activeTab === "distribute" ? "selected" : "unselected"} onClick={() => setActiveTab("distribute")}>경사뜨기 배분</PillButton>
         </div>
       </div>
 
@@ -656,7 +660,7 @@ function App() {
             <div style={{ flex: 1, minWidth: 200 }}>
               <Field label="도안 이름"><input type="text" value={patternName} onChange={(e) => setPatternName(e.target.value)} placeholder="예: 브라보 풀오버" /></Field>
             </div>
-            <PillButton variant="primary" onClick={saveJSON}>설정 저장 (JSON)</PillButton>
+            <PillButton variant="primary" onClick={saveJSON}>설정 저장 (json)</PillButton>
             <PillButton variant="secondary" onClick={() => fileInputRef.current.click()}>설정 불러오기</PillButton>
             <input ref={fileInputRef} type="file" accept="application/json" style={{ display: "none" }} onChange={loadJSON} />
             <PillButton variant="secondary" onClick={newPattern}>새 도안</PillButton>
@@ -672,6 +676,7 @@ function App() {
           </div>
 
           <div className="card" style={{ padding: 20, marginBottom: 20 }}>
+            <div className="card-title" style={{ marginBottom: 16 }}>게이지 설정</div>
             {mode === "A" ? (
               <div>
                 <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 24 }}>
@@ -686,7 +691,7 @@ function App() {
                     <input type="number" value={quickValue} onChange={(e) => setQuickValue(e.target.value)} placeholder="참고 도안 값 (예: 45)" style={{ width: 160 }} />
                     <span style={{ fontSize: 14 }}>→</span>
                     <span style={{ fontSize: 20, fontWeight: 700 }}>{quickResult === "" ? "-" : quickResult}</span>
-                    <span style={{ fontSize: 13, color: "#55524a" }}>{quickUnit === "sts" ? "콧수" : "단수"} (내 게이지 기준)</span>
+                    <span style={{ fontSize: 13, color: "#55524a" }}>{quickUnit === "sts" ? "sts" : "rows"} (내 게이지 기준)</span>
                   </div>
                 </div>
               </div>
@@ -705,7 +710,7 @@ function App() {
                 <input type="number" value={quickCmValue} onChange={(e) => setQuickCmValue(e.target.value)} placeholder="원하는 길이 (cm, 예: 50)" style={{ width: 170 }} />
                 <span style={{ fontSize: 14 }}>→</span>
                 <span style={{ fontSize: 20, fontWeight: 700 }}>{quickCmResult === "" ? "-" : quickCmResult}</span>
-                <span style={{ fontSize: 13, color: "#55524a" }}>{quickCmUnit === "sts" ? "콧수" : "단수"} (내 게이지 기준)</span>
+                <span style={{ fontSize: 13, color: "#55524a" }}>{quickCmUnit === "sts" ? "sts" : "rows"} (내 게이지 기준)</span>
               </div>
               <div className="caption" style={{ marginTop: 8, textTransform: "none", fontSize: 11, color: "#55524a" }}>
                 전체 구조(가슴둘레·기장 등)를 cm로 먼저 정할 때 바로 콧수/단수로 확인해보는 용도예요.
@@ -730,9 +735,10 @@ function App() {
           <TargetGoalsCard sizes={sizes} myGauge={myGauge} useEven={useEven} onCmChange={handleGoalCmChange} onCountChange={handleGoalCountChange} />
 
           <div className="card" style={{ padding: 20, marginBottom: 20, overflowX: "auto" }}>
-            <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: scanOpen ? 0 : 16 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: scanOpen ? 0 : 16, flexWrap: "wrap", gap: 10 }}>
+              <div className="card-title">사이즈별 상세 입력</div>
               <PillButton variant="secondary" onClick={() => setScanOpen((v) => !v)}>
-                {scanOpen ? "자동 입력 패널 접기" : "PDF/이미지로 자동 입력"}
+                {scanOpen ? "자동 입력 패널 접기" : "pdf/이미지로 자동 입력"}
               </PillButton>
             </div>
             {scanOpen && (
@@ -751,7 +757,7 @@ function App() {
                   <th style={{ minWidth: 140 }}>사이즈</th>
                   {fields.map((f) => (
                     <th key={f.key}>
-                      {mode === "A" ? f.label + " (" + (f.unit === "sts" ? "콧수" : "단수") + ")" : f.cmLabel}
+                      {mode === "A" ? f.label + " (" + (f.unit === "sts" ? "sts" : "rows") + ")" : f.cmLabel}
                     </th>
                   ))}
                   <th style={{ minWidth: 110 }}>동작</th>
@@ -791,7 +797,7 @@ function App() {
               <thead>
                 <tr>
                   <th style={{ borderBottom: "1px solid " + C.ink }}>사이즈</th>
-                  {fields.map((f) => <th key={f.key} style={{ borderBottom: "1px solid " + C.ink }}>{f.label} ({f.unit === "sts" ? "콧수" : "단수"})</th>)}
+                  {fields.map((f) => <th key={f.key} style={{ borderBottom: "1px solid " + C.ink }}>{f.label} ({f.unit === "sts" ? "sts" : "rows"})</th>)}
                 </tr>
               </thead>
               <tbody>
@@ -826,76 +832,83 @@ function App() {
         </React.Fragment>
       )}
 
-      {activeTab === "shortrow" && <ShortRowCalculator />}
+      {activeTab === "distribute" && <StitchDistributionCalculator />}
 
       <FloatingCalculator />
     </div>
   );
 }
 
-function ShortRowCalculator() {
-  const [totalStitches, setTotalStitches] = useState("");
-  const [turnsPerShoulder, setTurnsPerShoulder] = useState("");
+/* ---------- 콧수 증감 배분 계산기 ---------- */
+function StitchDistributionCalculator() {
+  const [startSts, setStartSts] = useState("");
+  const [endSts, setEndSts] = useState("");
+  const [rows, setRows] = useState("");
 
   const result = useMemo(() => {
-    const total = Number(totalStitches);
-    const turns = Number(turnsPerShoulder);
-    if (!total || !turns || turns <= 0) return null;
-
-    const rightTotal = Math.ceil(total / 2);
-    const leftTotal = Math.floor(total / 2);
-
-    function distribute(sideTotal, n) {
-      const base = Math.floor(sideTotal / n);
-      const rem = sideTotal % n;
-      const arr = [];
-      for (let i = 0; i < n; i++) arr.push(base + (i < rem ? 1 : 0));
-      return arr;
-    }
-
-    const rightSteps = distribute(rightTotal, turns);
-    const leftSteps = distribute(leftTotal, turns);
-
-    const rows = [];
+    const A = Number(startSts), B = Number(endSts);
+    if (!startSts || !endSts) return null;
+    const diff = Math.abs(B - A);
+    if (diff === 0) return { diff: 0 };
+    const direction = B > A ? "늘림(증가)" : "줄임(감소)";
+    const rowsAvail = rows === "" ? diff : Number(rows);
+    if (rowsAvail <= 0) return null;
+    // 턴수는 최대 diff(코차이)를 넘을 필요가 없고(1코 미만 턴은 의미 없음),
+    // 단수를 넣었다면 그 단수를 넘을 수도 없음(턴 하나당 최소 1단은 필요).
+    const n = Math.max(1, Math.min(diff, rowsAvail));
+    const base = Math.floor(diff / n);
+    const remainder = diff % n;
+    const countBig = remainder;
+    const countSmall = n - remainder;
+    const turnList = [];
     let cum = 0;
-    for (let i = 0; i < turns; i++) {
-      cum += rightSteps[i];
-      rows.push({ turn: rows.length + 1, side: "오른쪽 어깨", face: "겉면(RS)", stitches: rightSteps[i], cum });
-      cum += leftSteps[i];
-      rows.push({ turn: rows.length + 1, side: "왼쪽 어깨", face: "안면(WS)", stitches: leftSteps[i], cum });
+    for (let i = 0; i < n; i++) {
+      const st = i < remainder ? base + 1 : base;
+      cum += st;
+      turnList.push({ turn: i + 1, stitches: st, cum });
     }
-    return { rightTotal, leftTotal, rows };
-  }, [totalStitches, turnsPerShoulder]);
+    const autoNote = rows === "" ? "단수를 안 넣으셔서 가장 부드러운 방식(턴당 1코 기준)으로 턴수를 정했어요." : (rowsAvail < diff ? "입력한 단수보다 코 차이가 더 커서, 단수에 맞춰 턴당 여러 코씩 이동하도록 계산했어요." : "입력한 단수 안에서 가능한 한 부드럽게 턴수를 정했어요.");
+    return { diff, direction, n, base, remainder, countBig, countSmall, turnList, autoNote };
+  }, [startSts, endSts, rows]);
 
   return (
-    <div className="block" style={{ background: C.lilac, padding: 32 }}>
-      <div className="card-title" style={{ marginBottom: 16 }}>저먼 숏로우 어깨 경사뜨기 계산</div>
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 24, marginBottom: 6 }}>
-        <Field label="어깨 전체 콧수 (양쪽 합)"><input type="number" value={totalStitches} onChange={(e) => setTotalStitches(e.target.value)} placeholder="예: 40" /></Field>
-        <Field label="한쪽 어깨당 턴 수"><input type="number" value={turnsPerShoulder} onChange={(e) => setTurnsPerShoulder(e.target.value)} placeholder="예: 4" /></Field>
+    <div className="block" style={{ background: C.pink, padding: 32 }}>
+      <div className="card-title" style={{ marginBottom: 16 }}>경사뜨기(숏로우) 콧수 배분 계산기</div>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 20, marginBottom: 6 }}>
+        <Field label="시작 콧수 (A)"><input type="number" value={startSts} onChange={(e) => setStartSts(e.target.value)} placeholder="예: 120" /></Field>
+        <Field label="목표 콧수 (B)"><input type="number" value={endSts} onChange={(e) => setEndSts(e.target.value)} placeholder="예: 100" /></Field>
+        <Field label="사용 가능 단수 (선택)"><input type="number" value={rows} onChange={(e) => setRows(e.target.value)} placeholder="비워두면 자동" /></Field>
       </div>
-      <div className="caption" style={{ marginTop: 12, lineHeight: 1.7, textTransform: "none", fontSize: 11 }}>
-        전체 콧수가 홀수면 남는 1콧수는 오른쪽 어깨에 배정됩니다.<br />
-        턴은 오른쪽(겉면) → 왼쪽(안면) 순서로 번갈아 진행됩니다.
+      <div className="caption" style={{ marginTop: 4, marginBottom: 20, lineHeight: 1.7, textTransform: "none", fontSize: 11 }}>
+        턴수는 직접 정하지 않아도 돼요 — A코와 B코 차이, 그리고 (있다면) 사용 가능한 단수를 보고 알아서 턴수와 턴별 콧수를 계산해드려요.
       </div>
 
-      {result && (
-        <div style={{ background: "#fff", borderRadius: 8, padding: 16, marginTop: 20 }}>
-          <div className="body-sm" style={{ marginBottom: 10 }}>
-            오른쪽 어깨 총 {result.rightTotal}콧수 · 왼쪽 어깨 총 {result.leftTotal}콧수
+      {result && result.diff === 0 && (
+        <div style={{ background: "#fff", borderRadius: 8, padding: 16 }}>이미 시작 콧수와 목표 콧수가 같아서 경사뜨기가 필요 없어요.</div>
+      )}
+
+      {result && result.diff > 0 && (
+        <div style={{ background: "#fff", borderRadius: 8, padding: 16 }}>
+          <div className="body-sm" style={{ marginBottom: 12 }}>
+            총 <strong>{result.diff}코 {result.direction}</strong>을 <strong>{result.n}번의 턴</strong>으로 나눠요.
           </div>
-          <table>
-            <thead>
-              <tr><th>턴</th><th>어깨</th><th>면</th><th>이번 턴 콧수</th><th>누적 콧수</th></tr>
-            </thead>
-            <tbody>
-              {result.rows.map((r) => (
-                <tr key={r.turn}>
-                  <td>{r.turn}</td><td>{r.side}</td><td>{r.face}</td><td>{r.stitches}</td><td>{r.cum}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+          <ul style={{ margin: 0, paddingLeft: 20, fontSize: 14, lineHeight: 1.9, marginBottom: 14 }}>
+            {result.countBig > 0 && <li><strong>{result.base + 1}코씩 이동하는 턴, {result.countBig}번</strong></li>}
+            {result.countSmall > 0 && <li><strong>{result.base}코씩 이동하는 턴, {result.countSmall}번</strong></li>}
+          </ul>
+          <div style={{ overflowX: "auto" }}>
+            <table>
+              <thead><tr><th>턴</th><th>이번 턴 이동 콧수</th><th>누적 콧수</th></tr></thead>
+              <tbody>
+                {result.turnList.map((t) => (
+                  <tr key={t.turn}><td>{t.turn}</td><td>{t.stitches}</td><td>{t.cum}</td></tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <div className="caption" style={{ marginTop: 14, textTransform: "none", fontSize: 11, color: "#55524a" }}>
+            {result.autoNote} 콧수가 큰 턴을 앞에 두거나 뒤에 두는 건 자유예요 — 위 순서는 예시일 뿐, 디자인에 맞게 배치하면 돼요.
+          </div>
         </div>
       )}
     </div>
