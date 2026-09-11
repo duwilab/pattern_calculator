@@ -432,7 +432,18 @@ function App() {
   const fields = fieldsFor(construction);
 
   function updateSizeValue(id, key, val) {
-    setSizes((prev) => prev.map((s) => (s.id === id ? { ...s, values: { ...s.values, [key]: val } } : s)));
+    setSizes((prev) => prev.map((s) => {
+      if (s.id !== id) return s;
+      const newValues = { ...s.values, [key]: val };
+      if (mode === "B") {
+        const f = TARGET_FIELDS.find((tf) => tf.key === key);
+        if (f) {
+          newValues["goal_" + key + "_cm"] = val;
+          newValues["goal_" + key + "_count"] = val === "" ? "" : String(countFromCm(Number(val) || 0, f.axis, gaugeB, f.unit, useEven));
+        }
+      }
+      return { ...s, values: newValues };
+    }));
   }
   function updateSizeName(id, name) {
     setSizes((prev) => prev.map((s) => (s.id === id ? { ...s, name } : s)));
@@ -460,18 +471,24 @@ function App() {
   function handleGoalCmChange(sizeId, field, val) {
     const cmNum = Number(val) || 0;
     const countVal = val === "" ? "" : String(countFromCm(cmNum, field.axis, myGauge, field.unit, useEven));
-    setSizes((prev) => prev.map((s) => (s.id === sizeId ? {
-      ...s,
-      values: { ...s.values, ["goal_" + field.key + "_cm"]: val, ["goal_" + field.key + "_count"]: countVal },
-    } : s)));
+    const isSynced = mode === "B" && ["chest", "totalLength", "armholeDepth"].includes(field.key);
+    setSizes((prev) => prev.map((s) => {
+      if (s.id !== sizeId) return s;
+      const newValues = { ...s.values, ["goal_" + field.key + "_cm"]: val, ["goal_" + field.key + "_count"]: countVal };
+      if (isSynced) newValues[field.key] = val;
+      return { ...s, values: newValues };
+    }));
   }
   function handleGoalCountChange(sizeId, field, val) {
     const countNum = Number(val) || 0;
     const cmVal = val === "" ? "" : String(Math.round(cmFromCount(countNum, field.axis, myGauge) * 10) / 10);
-    setSizes((prev) => prev.map((s) => (s.id === sizeId ? {
-      ...s,
-      values: { ...s.values, ["goal_" + field.key + "_count"]: val, ["goal_" + field.key + "_cm"]: cmVal },
-    } : s)));
+    const isSynced = mode === "B" && ["chest", "totalLength", "armholeDepth"].includes(field.key);
+    setSizes((prev) => prev.map((s) => {
+      if (s.id !== sizeId) return s;
+      const newValues = { ...s.values, ["goal_" + field.key + "_count"]: val, ["goal_" + field.key + "_cm"]: cmVal };
+      if (isSynced) newValues[field.key] = cmVal;
+      return { ...s, values: newValues };
+    }));
   }
 
   const quickResult = useMemo(() => {
@@ -732,7 +749,11 @@ function App() {
               <thead>
                 <tr>
                   <th style={{ minWidth: 140 }}>사이즈</th>
-                  {fields.map((f) => <th key={f.key}>{mode === "A" ? f.label : f.cmLabel}</th>)}
+                  {fields.map((f) => (
+                    <th key={f.key}>
+                      {mode === "A" ? f.label + " (" + (f.unit === "sts" ? "콧수" : "단수") + ")" : f.cmLabel}
+                    </th>
+                  ))}
                   <th style={{ minWidth: 110 }}>동작</th>
                 </tr>
               </thead>
