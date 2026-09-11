@@ -4,26 +4,125 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>게이지 도안 계산기</title>
+<link rel="stylesheet" as="style" crossorigin href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.css" />
 <script crossorigin src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
 <script crossorigin src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.5/babel.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
 <style>
-  html, body { margin:0; padding:0; }
+  :root {
+    --ink:#000000; --canvas:#ffffff; --hairline:#e6e6e6; --hairline-soft:#f1f1f1; --surface-soft:#f7f7f5;
+    --lime:#dceeb1; --lilac:#c5b0f4; --cream:#f4ecd6; --pink:#efd4d4; --mint:#c8e6cd; --coral:#f3c9b6; --navy:#1f1d3d;
+    --magenta:#ff3d8b; --success:#1ea64a;
+    --r-xs:2px; --r-sm:6px; --r-md:8px; --r-lg:24px; --r-pill:50px; --r-full:9999px;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin:0; padding:0; background:var(--canvas); color:var(--ink); }
+  body { font-family:'Pretendard', -apple-system, "Malgun Gothic", sans-serif; }
+  .ff-mono { font-family:'Pretendard', monospace; }
+  .eyebrow { font-family:'Pretendard', monospace; text-transform:uppercase; font-size:13px; font-weight:400; letter-spacing:0.5px; color:var(--ink); }
+  .caption { font-family:'Pretendard', monospace; text-transform:uppercase; font-size:11px; font-weight:400; letter-spacing:0.5px; color:#55524a; }
+  .headline { font-size:24px; font-weight:540; line-height:1.3; letter-spacing:-0.2px; }
+  .card-title { font-size:17px; font-weight:700; line-height:1.4; }
+  .body-sm { font-size:13px; font-weight:330; line-height:1.5; }
+  input[type="number"], input[type="text"] {
+    width:100%; padding:10px 12px; border:1px solid var(--hairline); border-radius:var(--r-md);
+    font-size:14px; font-family:'Pretendard', sans-serif; font-weight:400; background:var(--canvas); color:var(--ink);
+  }
+  input:focus { outline: none; box-shadow: 0 0 0 2px var(--ink); border-color: var(--ink); }
+  button { font-family:'Pretendard', sans-serif; cursor:pointer; }
+  table { border-collapse: collapse; width:100%; }
+  th, td { border-bottom:1px solid var(--hairline-soft); padding:8px; font-size:13px; text-align:center; }
+  th { font-family:'Pretendard', monospace; text-transform:uppercase; font-size:11px; font-weight:400; letter-spacing:0.4px; color:#55524a; border-bottom:1px solid var(--ink); }
+  .card { background:var(--surface-soft); border:1px solid var(--hairline); border-radius:var(--r-md); }
+  .block { border-radius:var(--r-lg); }
+  ::-webkit-scrollbar { width:8px; height:8px; }
+  ::-webkit-scrollbar-thumb { background:var(--hairline); border-radius:8px; }
 </style>
 </head>
 <body>
 <div id="root"></div>
-
 <script type="text/babel" data-presets="react">
-const { useState, useMemo, useRef } = React;
+const { useState, useMemo, useRef, useEffect } = React;
 
-/* ---------- 스타일 토큰 ---------- */
-const INK = "#2B2A28";
-const BG = "#F6F4EE";
-const TEAL = "#1F6B5C";
-const MUSTARD = "#C98A2B";
-const GRID = "#D8D2C4";
+const C = {
+  ink: "#000000", canvas: "#ffffff", hairline: "#e6e6e6", hairlineSoft: "#f1f1f1", surfaceSoft: "#f7f7f5",
+  lime: "#dceeb1", lilac: "#c5b0f4", cream: "#f4ecd6", pink: "#efd4d4", mint: "#c8e6cd", coral: "#f3c9b6", navy: "#1f1d3d",
+  magenta: "#ff3d8b", success: "#1ea64a",
+};
 
+if (window.pdfjsLib) {
+  window.pdfjsLib.GlobalWorkerOptions.workerSrc = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
+}
+
+/* ---------- PDF / 이미지 텍스트 → 치수 값 파싱 (베스트 에포트) ---------- */
+const FIELD_SYNONYMS = {
+  chest: ["가슴둘레", "가슴 둘레", "가슴", "chest", "bust"],
+  totalLength: ["총기장", "총 기장", "기장", "total length", "length"],
+  armholeDepth: ["진동길이", "진동 길이", "진동깊이", "진동", "armhole depth", "armhole"],
+  shoulderWidth: ["어깨너비", "어깨 너비", "어깨넓이", "어깨", "shoulder width", "shoulder"],
+  neckWidth: ["목너비", "목 너비", "목둘레", "neck width", "neck"],
+  sleeveLength: ["소매길이", "소매 길이", "sleeve length"],
+  sleeveCuff: ["소매밑단너비", "소매밑단", "소매 밑단", "cuff width", "cuff"],
+  sleeveTop: ["소매산너비", "소매산", "소매 산", "sleeve cap"],
+  raglanLine: ["래글런선", "래글런 선", "raglan line"],
+  armholeBindOff: ["진동 덮어씌우기", "진동덮어씌우기", "armhole bind off"],
+};
+
+function parseMeasurementsFromText(text, fields) {
+  const found = {};
+  if (!text) return found;
+  const lines = text.split(/\n+/);
+  fields.forEach((f) => {
+    const keys = FIELD_SYNONYMS[f.key] || [f.label];
+    for (const rawLine of lines) {
+      const line = rawLine.toLowerCase();
+      const hit = keys.some((k) => line.includes(k.toLowerCase()));
+      if (hit) {
+        const nums = rawLine.match(/[0-9]+(\.[0-9]+)?/g);
+        if (nums && nums.length) {
+          found[f.key] = nums[0];
+          break;
+        }
+      }
+    }
+  });
+  return found;
+}
+
+/* ---------- 버튼 프리미티브 (design guide 기반) ---------- */
+function PillButton({ children, onClick, variant, style, disabled }) {
+  const base = {
+    fontFamily: "'Pretendard', sans-serif", fontSize: 13, fontWeight: 480, letterSpacing: "-0.1px",
+    borderRadius: 50, padding: "9px 18px", border: "none", cursor: disabled ? "default" : "pointer",
+    opacity: disabled ? 0.4 : 1,
+  };
+  const variants = {
+    primary: { background: C.ink, color: "#fff" },
+    secondary: { background: C.canvas, color: C.ink, border: "1px solid " + C.hairline },
+    selected: { background: C.ink, color: "#fff" },
+    unselected: { background: C.canvas, color: C.ink, border: "1px solid " + C.hairline },
+    magenta: { background: C.magenta, color: "#fff" },
+  };
+  return (
+    <button disabled={disabled} onClick={onClick} style={{ ...base, ...(variants[variant] || variants.secondary), ...style }}>
+      {children}
+    </button>
+  );
+}
+function IconButton({ children, onClick, inverse, style }) {
+  return (
+    <button onClick={onClick} style={{
+      width: 36, height: 36, borderRadius: "50%", border: "none",
+      background: inverse ? "rgba(255,255,255,0.16)" : C.surfaceSoft,
+      color: inverse ? "#fff" : C.ink, fontSize: 15, display: "flex", alignItems: "center", justifyContent: "center",
+      ...style,
+    }}>{children}</button>
+  );
+}
+
+/* ---------- 도안 계산기 데이터 정의 ---------- */
 const CONSTRUCTIONS = [
   { id: "raglan", label: "래글런" },
   { id: "setin", label: "셋인 슬리브" },
@@ -31,23 +130,19 @@ const CONSTRUCTIONS = [
 ];
 
 const COMMON_FIELDS = [
-  { key: "chest", label: "가슴둘레", unit: "sts", cmLabel: "가슴둘레(cm)", half: true },
-  { key: "totalLength", label: "총기장", unit: "rows", cmLabel: "총기장(cm)" },
-  { key: "armholeDepth", label: "진동길이", unit: "rows", cmLabel: "진동길이(cm)" },
-  { key: "shoulderWidth", label: "어깨너비", unit: "sts", cmLabel: "어깨너비(cm)" },
-  { key: "neckWidth", label: "목너비", unit: "sts", cmLabel: "목너비(cm)" },
-  { key: "sleeveLength", label: "소매길이", unit: "rows", cmLabel: "소매길이(cm)" },
-  { key: "sleeveCuff", label: "소매밑단너비", unit: "sts", cmLabel: "소매밑단너비(cm)" },
-  { key: "sleeveTop", label: "소매산너비", unit: "sts", cmLabel: "소매산너비(cm)" },
+  { key: "chest", label: "가슴둘레", unit: "sts", cmLabel: "가슴둘레(cm)", axis: "h" },
+  { key: "totalLength", label: "총기장", unit: "rows", cmLabel: "총기장(cm)", axis: "v" },
+  { key: "armholeDepth", label: "진동길이", unit: "rows", cmLabel: "진동길이(cm)", axis: "v" },
+  { key: "shoulderWidth", label: "어깨너비", unit: "sts", cmLabel: "어깨너비(cm)", axis: "h" },
+  { key: "neckWidth", label: "목너비", unit: "sts", cmLabel: "목너비(cm)", axis: "h" },
+  { key: "sleeveLength", label: "소매길이", unit: "rows", cmLabel: "소매길이(cm)", axis: "v" },
+  { key: "sleeveCuff", label: "소매밑단너비", unit: "sts", cmLabel: "소매밑단너비(cm)", axis: "h" },
+  { key: "sleeveTop", label: "소매산너비", unit: "sts", cmLabel: "소매산너비(cm)", axis: "h" },
 ];
 
 const EXTRA_FIELDS = {
-  raglan: [
-    { key: "raglanLine", label: "래글런선 길이", unit: "rows", cmLabel: "래글런선 길이(cm)" },
-  ],
-  setin: [
-    { key: "armholeBindOff", label: "진동 덮어씌우기", unit: "sts", cmLabel: "진동 덮어씌우기 폭(cm)" },
-  ],
+  raglan: [{ key: "raglanLine", label: "래글런선 길이", unit: "rows", cmLabel: "래글런선 길이(cm)", axis: "v" }],
+  setin: [{ key: "armholeBindOff", label: "진동 덮어씌우기", unit: "sts", cmLabel: "진동 덮어씌우기 폭(cm)", axis: "h" }],
   drop: [],
 };
 
@@ -59,411 +154,734 @@ function roundEven(n) {
   const r = Math.round(n);
   return r % 2 === 0 ? r : r + (r > n ? -1 : 1);
 }
-function toEven(n, useEven) {
+function toStitchCount(n, useEven) {
   return useEven ? roundEven(n) : Math.round(n);
 }
-function applyRepeat(n, repeat) {
-  const r = parseFloat(repeat);
+function snapToRepeat(n, repeat) {
+  const r = Number(repeat);
   if (!r || r <= 0) return n;
   return Math.round(n / r) * r;
 }
-
-let uid = 1;
-function nextId() { return uid++; }
-
-function emptySize(construction) {
-  const obj = { id: nextId(), name: "", values: {} };
-  fieldsFor(construction).forEach((f) => (obj.values[f.key] = ""));
-  return obj;
+function densityOf(gauge, axis) {
+  if (axis === "h") {
+    const len = Number(gauge.stitchBaseLength) || 10;
+    const cnt = Number(gauge.stitchCount) || 0;
+    return len > 0 ? cnt / len : 0;
+  } else {
+    const len = Number(gauge.rowBaseLength) || 10;
+    const cnt = Number(gauge.rowCount) || 0;
+    return len > 0 ? cnt / len : 0;
+  }
 }
+
+let idSeq = 1;
+function nextId() { return "id" + (idSeq++) + "_" + Math.random().toString(36).slice(2, 7); }
 
 function emptyGauge() {
-  return { sts: "20", rows: "28", unit: "10" };
+  return { stitchCount: "", stitchBaseLength: "10", rowCount: "", rowBaseLength: "10" };
+}
+function emptySize(name) {
+  return { id: nextId(), name: name || "Size", values: {} };
 }
 
-// 콧수/단수 밀도 계산 (게이지 기준 길이 cm당)
-function density(gauge, kind) {
-  const val = parseFloat(kind === "sts" ? gauge.sts : gauge.rows) || 0;
-  const unit = parseFloat(gauge.unit) || 0;
-  if (!unit) return 0;
-  return val / unit; // per cm
+function Field({ label, children }) {
+  return (
+    <div>
+      <div className="caption" style={{ marginBottom: 6 }}>{label}</div>
+      {children}
+    </div>
+  );
 }
 
 function GaugeInput({ label, gauge, onChange }) {
+  const set = (key) => (e) => onChange({ ...gauge, [key]: e.target.value });
   return (
     <div>
-      <div style={{ fontSize: 12, color: "#6b6558", marginBottom: 6 }}>{label}</div>
-      <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-        <input type="number" placeholder="콧수" value={gauge.sts} onChange={(e) => onChange({ ...gauge, sts: e.target.value })} />
-        <input type="number" placeholder="단수" value={gauge.rows} onChange={(e) => onChange({ ...gauge, rows: e.target.value })} />
-        <span style={{ fontSize: 12, color: "#8a8474", whiteSpace: "nowrap" }}>/</span>
-        <input type="number" placeholder="cm" value={gauge.unit} onChange={(e) => onChange({ ...gauge, unit: e.target.value })} style={{ maxWidth: 70 }} />
-        <span style={{ fontSize: 12, color: "#8a8474", whiteSpace: "nowrap" }}>cm</span>
+      <div className="card-title" style={{ fontSize: 14, marginBottom: 10 }}>{label}</div>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+        <Field label="콧수 (가로)"><input type="number" value={gauge.stitchCount} onChange={set("stitchCount")} placeholder="예: 20" /></Field>
+        <Field label="기준 길이(cm)"><input type="number" value={gauge.stitchBaseLength} onChange={set("stitchBaseLength")} placeholder="예: 10" /></Field>
+        <Field label="단수 (세로)"><input type="number" value={gauge.rowCount} onChange={set("rowCount")} placeholder="예: 28" /></Field>
+        <Field label="기준 길이(cm)"><input type="number" value={gauge.rowBaseLength} onChange={set("rowBaseLength")} placeholder="예: 10" /></Field>
       </div>
     </div>
   );
 }
 
-function KnitCalculator() {
-  const [patternName, setPatternName] = useState("");
-  const [mode, setMode] = useState("A");
-  const [construction, setConstruction] = useState("raglan");
-  const [useEven, setUseEven] = useState(true);
-  const [repeat, setRepeat] = useState("");
+function ScanImportPanel({ sizes, fields, onApply, onClose }) {
+  const [targetId, setTargetId] = useState(sizes[0] ? sizes[0].id : "");
+  const [extractedText, setExtractedText] = useState("");
+  const [status, setStatus] = useState("");
+  const [foundPreview, setFoundPreview] = useState(null);
+  const pdfInputRef = useRef(null);
+  const imgInputRef = useRef(null);
 
+  useEffect(() => {
+    if (!sizes.find((s) => s.id === targetId) && sizes[0]) setTargetId(sizes[0].id);
+  }, [sizes]);
+
+  async function handlePdf(e) {
+    const file = e.target.files[0];
+    if (!file) return;
+    setStatus("PDF 읽는 중...");
+    setFoundPreview(null);
+    try {
+      const buf = await file.arrayBuffer();
+      const pdf = await window.pdfjsLib.getDocument({ data: buf }).promise;
+      let fullText = "";
+      for (let i = 1; i <= pdf.numPages; i++) {
+        const page = await pdf.getPage(i);
+        const content = await page.getTextContent();
+        fullText += content.items.map((it) => it.str).join(" ") + "\n";
+      }
+      setExtractedText(fullText.trim());
+      setStatus("추출 완료. 아래 텍스트를 확인한 뒤 자동 채우기를 시도하세요.");
+    } catch (err) {
+      setStatus("PDF를 읽는 중 오류가 발생했습니다. 텍스트가 포함된 PDF인지 확인해주세요.");
+    }
+    e.target.value = "";
+  }
+
+  async function handleImage(e) {
+    const file = e.target.files[0];
+    if (!file) return;
+    setStatus("이미지 인식 중... (0%)");
+    setFoundPreview(null);
+    try {
+      const result = await window.Tesseract.recognize(file, "kor+eng", {
+        logger: (m) => {
+          if (m.status === "recognizing text") setStatus("이미지 인식 중... (" + Math.round((m.progress || 0) * 100) + "%)");
+        },
+      });
+      setExtractedText((result.data.text || "").trim());
+      setStatus("인식 완료. 아래 텍스트를 확인한 뒤 자동 채우기를 시도하세요.");
+    } catch (err) {
+      setStatus("이미지 인식 중 오류가 발생했습니다.");
+    }
+    e.target.value = "";
+  }
+
+  function tryAutoFill() {
+    setFoundPreview(parseMeasurementsFromText(extractedText, fields));
+  }
+  function applyValues() {
+    if (!foundPreview || !targetId) return;
+    onApply(targetId, foundPreview);
+    setStatus("선택한 사이즈에 값을 채웠습니다. 아래 표에서 다시 한 번 확인해주세요.");
+  }
+
+  return (
+    <div style={{ border: "1px solid " + C.hairline, borderRadius: 8, padding: 16, marginBottom: 16, background: "#fff" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+        <div className="card-title" style={{ fontSize: 14 }}>PDF / 이미지로 자동 입력</div>
+        <PillButton variant="secondary" style={{ padding: "5px 12px", fontSize: 11 }} onClick={onClose}>닫기</PillButton>
+      </div>
+
+      <div style={{ marginBottom: 12, maxWidth: 260 }}>
+        <Field label="채워 넣을 사이즈">
+          <select value={targetId} onChange={(e) => setTargetId(e.target.value)}
+            style={{ width: "100%", padding: "10px 12px", border: "1px solid " + C.hairline, borderRadius: 8, fontSize: 14, background: "#fff" }}>
+            {sizes.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+          </select>
+        </Field>
+      </div>
+
+      <div style={{ display: "flex", gap: 8, marginBottom: 10, flexWrap: "wrap" }}>
+        <PillButton variant="secondary" onClick={() => pdfInputRef.current.click()}>기존 도안 PDF 업로드</PillButton>
+        <input ref={pdfInputRef} type="file" accept="application/pdf" style={{ display: "none" }} onChange={handlePdf} />
+        <PillButton variant="secondary" onClick={() => imgInputRef.current.click()}>기성품 사이즈 이미지 업로드</PillButton>
+        <input ref={imgInputRef} type="file" accept="image/*" style={{ display: "none" }} onChange={handleImage} />
+      </div>
+
+      {status && <div className="body-sm" style={{ marginBottom: 10, color: "#55524a" }}>{status}</div>}
+
+      {extractedText && (
+        <div style={{ marginBottom: 12 }}>
+          <div className="caption" style={{ marginBottom: 6 }}>추출된 텍스트 (수정 가능)</div>
+          <textarea value={extractedText} onChange={(e) => setExtractedText(e.target.value)}
+            style={{ width: "100%", minHeight: 100, padding: 10, border: "1px solid " + C.hairline, borderRadius: 8, fontSize: 12, fontFamily: "'Pretendard', monospace" }} />
+          <div style={{ marginTop: 8 }}>
+            <PillButton variant="primary" onClick={tryAutoFill}>자동 채우기 시도</PillButton>
+          </div>
+        </div>
+      )}
+
+      {foundPreview && (
+        <div style={{ background: C.surfaceSoft, borderRadius: 8, padding: 12 }}>
+          <div className="caption" style={{ marginBottom: 8 }}>인식된 값 (적용 전 확인)</div>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6, fontSize: 13, marginBottom: 10 }}>
+            {fields.map((f) => (
+              <div key={f.key} style={{ display: "flex", justifyContent: "space-between", borderBottom: "1px solid " + C.hairlineSoft, padding: "4px 0" }}>
+                <span>{f.label}</span>
+                <span style={{ fontWeight: 600 }}>{foundPreview[f.key] ?? "—"}</span>
+              </div>
+            ))}
+          </div>
+          <PillButton variant="primary" onClick={applyValues}>선택한 사이즈에 적용</PillButton>
+        </div>
+      )}
+
+      <div className="caption" style={{ marginTop: 12, textTransform: "none", fontSize: 11, color: "#8a8474" }}>
+        PDF/이미지 인식은 완벽하지 않을 수 있어요. 적용 후 표에서 값을 다시 한 번 확인해주세요. 문서가 실제 콧수/단수인지, 실측 cm인지에 맞춰 위쪽의 계산 모드(기준 도안 스케일링 / 신체 치수 기반)를 선택해주세요.
+      </div>
+    </div>
+  );
+}
+
+function App() {
+  const [patternName, setPatternName] = useState("");
+  const [construction, setConstruction] = useState("raglan");
+  const [mode, setMode] = useState("A");
   const [baseGauge, setBaseGauge] = useState(emptyGauge());
   const [targetGauge, setTargetGauge] = useState(emptyGauge());
-  const [sizesA, setSizesA] = useState([emptySize("raglan")]);
-
   const [gaugeB, setGaugeB] = useState(emptyGauge());
-  const [ease, setEase] = useState("6");
-  const [sizesB, setSizesB] = useState([emptySize("raglan")]);
-
-  const [toast, setToast] = useState("");
+  const [ease, setEase] = useState("0");
+  const [useEven, setUseEven] = useState(true);
+  const [repeat, setRepeat] = useState("");
+  const [sizes, setSizes] = useState([emptySize("Size 1")]);
+  const [activeTab, setActiveTab] = useState("calc");
+  const [scanOpen, setScanOpen] = useState(false);
   const fileInputRef = useRef(null);
-
-  function showToast(msg) {
-    setToast(msg);
-    setTimeout(() => setToast(""), 2200);
-  }
-
-  function switchConstruction(id) {
-    setConstruction(id);
-    setSizesA((prev) => prev.map((s) => {
-      const v = {};
-      fieldsFor(id).forEach((f) => (v[f.key] = s.values[f.key] ?? ""));
-      return { ...s, values: v };
-    }));
-    setSizesB((prev) => prev.map((s) => {
-      const v = {};
-      fieldsFor(id).forEach((f) => (v[f.key] = s.values[f.key] ?? ""));
-      return { ...s, values: v };
-    }));
-  }
-
-  function addSize() {
-    if (mode === "A") setSizesA((p) => [...p, emptySize(construction)]);
-    else setSizesB((p) => [...p, emptySize(construction)]);
-  }
-  function duplicateSize(id) {
-    const source = mode === "A" ? sizesA : sizesB;
-    const target = source.find((s) => s.id === id);
-    if (!target) return;
-    const copy = { id: nextId(), name: target.name ? `${target.name} 복사` : "", values: { ...target.values } };
-    if (mode === "A") {
-      setSizesA((p) => {
-        const idx = p.findIndex((s) => s.id === id);
-        const next = [...p];
-        next.splice(idx + 1, 0, copy);
-        return next;
-      });
-    } else {
-      setSizesB((p) => {
-        const idx = p.findIndex((s) => s.id === id);
-        const next = [...p];
-        next.splice(idx + 1, 0, copy);
-        return next;
-      });
-    }
-    showToast("사이즈를 복사했습니다");
-  }
-  function removeSize(id) {
-    if (mode === "A") setSizesA((p) => (p.length > 1 ? p.filter((s) => s.id !== id) : p));
-    else setSizesB((p) => (p.length > 1 ? p.filter((s) => s.id !== id) : p));
-  }
-  function updateSizeName(id, name) {
-    const upd = (p) => p.map((s) => (s.id === id ? { ...s, name } : s));
-    if (mode === "A") setSizesA(upd); else setSizesB(upd);
-  }
-  function updateSizeValue(id, key, val) {
-    const upd = (p) => p.map((s) => (s.id === id ? { ...s, values: { ...s.values, [key]: val } } : s));
-    if (mode === "A") setSizesA(upd); else setSizesB(upd);
-  }
 
   const fields = fieldsFor(construction);
 
+  function updateSizeValue(id, key, val) {
+    setSizes((prev) => prev.map((s) => (s.id === id ? { ...s, values: { ...s.values, [key]: val } } : s)));
+  }
+  function updateSizeName(id, name) {
+    setSizes((prev) => prev.map((s) => (s.id === id ? { ...s, name } : s)));
+  }
+  function addSize() {
+    setSizes((prev) => [...prev, emptySize("Size " + (prev.length + 1))]);
+  }
+  function duplicateSize(id) {
+    setSizes((prev) => {
+      const src = prev.find((s) => s.id === id);
+      if (!src) return prev;
+      const copy = { id: nextId(), name: src.name + " 복사", values: { ...src.values } };
+      const idx = prev.findIndex((s) => s.id === id);
+      const next = [...prev];
+      next.splice(idx + 1, 0, copy);
+      return next;
+    });
+  }
+  function removeSize(id) {
+    setSizes((prev) => (prev.length > 1 ? prev.filter((s) => s.id !== id) : prev));
+  }
+
   const results = useMemo(() => {
-    if (mode === "A") {
-      const baseStsDensity = density(baseGauge, "sts");
-      const baseRowDensity = density(baseGauge, "rows");
-      const targetStsDensity = density(targetGauge, "sts");
-      const targetRowDensity = density(targetGauge, "rows");
-      const ratioS = baseStsDensity > 0 ? targetStsDensity / baseStsDensity : 0;
-      const ratioR = baseRowDensity > 0 ? targetRowDensity / baseRowDensity : 0;
-      return sizesA.map((s) => {
-        const out = {};
-        fields.forEach((f) => {
-          const base = parseFloat(s.values[f.key]);
-          if (isNaN(base)) { out[f.key] = null; return; }
-          const ratio = f.unit === "sts" ? ratioS : ratioR;
-          let val = base * ratio;
-          if (f.unit === "sts") { val = toEven(val, useEven); val = applyRepeat(val, repeat); }
-          else { val = Math.round(val); }
-          out[f.key] = val;
-        });
-        return { id: s.id, name: s.name, out };
+    return sizes.map((size) => {
+      const out = { id: size.id, name: size.name, values: {} };
+      fields.forEach((f) => {
+        const raw = Number(size.values[f.key]);
+        if (!raw && raw !== 0) { out.values[f.key] = ""; return; }
+        let cm, newVal;
+        if (mode === "A") {
+          const baseDensity = densityOf(baseGauge, f.axis);
+          const targetDensity = densityOf(targetGauge, f.axis);
+          cm = baseDensity > 0 ? raw / baseDensity : 0;
+          newVal = cm * targetDensity;
+        } else {
+          const density = densityOf(gaugeB, f.axis);
+          cm = raw + (f.key === "chest" ? Number(ease || 0) : 0);
+          newVal = cm * density;
+        }
+        if (f.unit === "sts") {
+          let v = toStitchCount(newVal, useEven);
+          if (f.key === "chest" && repeat) v = snapToRepeat(v, repeat);
+          out.values[f.key] = v;
+        } else {
+          out.values[f.key] = Math.round(newVal);
+        }
       });
-    } else {
-      const stsPerCm = density(gaugeB, "sts");
-      const rowsPerCm = density(gaugeB, "rows");
-      const easeVal = parseFloat(ease) || 0;
-      return sizesB.map((s) => {
-        const out = {};
-        fields.forEach((f) => {
-          const cm = parseFloat(s.values[f.key]);
-          if (isNaN(cm)) { out[f.key] = null; return; }
-          const adjustedCm = f.half ? (cm + easeVal) / 2 : cm;
-          const perCm = f.unit === "sts" ? stsPerCm : rowsPerCm;
-          let val = adjustedCm * perCm;
-          if (f.unit === "sts") { val = toEven(val, useEven); val = applyRepeat(val, repeat); }
-          else { val = Math.round(val); }
-          out[f.key] = val;
-        });
-        return { id: s.id, name: s.name, out };
-      });
-    }
-  }, [mode, construction, baseGauge, targetGauge, sizesA, gaugeB, ease, sizesB, useEven, repeat, fields]);
+      return out;
+    });
+  }, [sizes, fields, mode, baseGauge, targetGauge, gaugeB, ease, useEven, repeat]);
 
-  function downloadCSV() {
-    const header = ["사이즈", ...fields.map((f) => `${f.label}(${f.unit === "sts" ? "콧수" : "단수"})`)];
-    const rows = results.map((r) => [r.name || "-", ...fields.map((f) => (r.out[f.key] == null ? "" : r.out[f.key]))]);
-    const csv = [header, ...rows].map((row) => row.join(",")).join("\n");
-    const blob = new Blob(["\uFEFF" + csv], { type: "text/csv;charset=utf-8;" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `${patternName || "knit-calc"}-${construction}-${mode}.csv`;
-    a.click();
-    URL.revokeObjectURL(url);
+  function copyResults() {
+    const header = ["Size", ...fields.map((f) => f.label)].join("\t");
+    const rows = results.map((r) => [r.name, ...fields.map((f) => r.values[f.key] ?? "")].join("\t"));
+    const text = [header, ...rows].join("\n");
+    navigator.clipboard.writeText(text).then(() => alert("결과가 클립보드에 복사되었습니다. 구글시트에 붙여넣기 하세요."));
   }
 
-  function copyResultsToClipboard() {
-    const header = ["사이즈", ...fields.map((f) => `${f.label}(${f.unit === "sts" ? "콧수" : "단수"})`)];
-    const rows = results.map((r) => [r.name || "-", ...fields.map((f) => (r.out[f.key] == null ? "" : r.out[f.key]))]);
-    const text = [header, ...rows].map((row) => row.join("\t")).join("\n");
-    navigator.clipboard.writeText(text).then(
-      () => showToast("결과표를 클립보드에 복사했습니다 (구글시트에 붙여넣기 가능)"),
-      () => showToast("복사에 실패했습니다")
-    );
-  }
-
-  function saveSettingsJSON() {
+  function saveJSON() {
     const data = {
-      patternName: patternName || "이름없는 도안",
-      mode,
-      construction,
-      useEven,
-      repeat,
-      baseGauge,
-      targetGauge,
-      sizesA: sizesA.map(({ id, ...rest }) => rest),
-      gaugeB,
-      ease,
-      sizesB: sizesB.map(({ id, ...rest }) => rest),
-      savedAt: new Date().toISOString(),
+      patternName, construction, mode, baseGauge, targetGauge, gaugeB, ease, useEven, repeat,
+      sizes: sizes.map((s) => ({ name: s.name, values: s.values })),
     };
-    const json = JSON.stringify(data, null, 2);
-    const blob = new Blob([json], { type: "application/json;charset=utf-8;" });
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
-    const safeName = (patternName || "pattern").trim().replace(/[^a-zA-Z0-9가-힣_-]/g, "_");
     a.href = url;
-    a.download = `${safeName}.json`;
+    a.download = (patternName || "pattern") + ".json";
     a.click();
     URL.revokeObjectURL(url);
-    showToast("도안 설정을 저장했습니다");
   }
 
-  function triggerLoad() {
-    fileInputRef.current && fileInputRef.current.click();
-  }
-
-  function handleLoadFile(e) {
+  function loadJSON(e) {
     const file = e.target.files[0];
     if (!file) return;
     const reader = new FileReader();
-    reader.onload = (evt) => {
+    reader.onload = (ev) => {
       try {
-        const data = JSON.parse(evt.target.result);
+        const data = JSON.parse(ev.target.result);
         setPatternName(data.patternName || "");
-        setMode(data.mode || "A");
         setConstruction(data.construction || "raglan");
-        setUseEven(data.useEven ?? true);
-        setRepeat(data.repeat || "");
+        setMode(data.mode || "A");
         setBaseGauge(data.baseGauge || emptyGauge());
         setTargetGauge(data.targetGauge || emptyGauge());
-        setSizesA((data.sizesA || []).map((s) => ({ id: nextId(), ...s })));
         setGaugeB(data.gaugeB || emptyGauge());
-        setEase(data.ease ?? "6");
-        setSizesB((data.sizesB || []).map((s) => ({ id: nextId(), ...s })));
-        showToast(`"${data.patternName || "도안"}" 불러왔습니다`);
+        setEase(data.ease ?? "0");
+        setUseEven(data.useEven ?? true);
+        setRepeat(data.repeat || "");
+        setSizes((data.sizes || []).map((s) => ({ id: nextId(), name: s.name, values: s.values || {} })));
       } catch (err) {
-        showToast("파일을 읽는 중 오류가 발생했습니다");
+        alert("JSON 파일을 읽는 중 오류가 발생했습니다.");
       }
     };
     reader.readAsText(file);
     e.target.value = "";
   }
 
-  const currentSizes = mode === "A" ? sizesA : sizesB;
+  function newPattern() {
+    if (!confirm("현재 입력 내용을 지우고 새 도안을 시작할까요?")) return;
+    setPatternName("");
+    setBaseGauge(emptyGauge());
+    setTargetGauge(emptyGauge());
+    setGaugeB(emptyGauge());
+    setEase("0");
+    setRepeat("");
+    setSizes([emptySize("Size 1")]);
+  }
 
   return (
-    <div style={{ background: BG, minHeight: "100vh", color: INK, fontFamily: "ui-sans-serif, system-ui" }}>
-      <style>{`
-        .disp { font-family: Georgia, 'Nanum Myeongjo', serif; }
-        .mono { font-family: ui-monospace, 'SF Mono', Menlo, monospace; }
-        .card { background:#fff; border:1px solid ${GRID}; border-radius:2px; }
-        input[type=text], input[type=number] {
-          border:1px solid ${GRID}; border-radius:2px; padding:6px 8px; width:100%;
-          font-family: ui-monospace, monospace; background:#fff; color:${INK}; box-sizing:border-box;
-        }
-        input:focus { outline:2px solid ${TEAL}; outline-offset:1px; }
-        .seg-btn { border:1px solid ${GRID}; background:#fff; color:${INK}; padding:8px 14px; cursor:pointer; font-size:14px; }
-        .seg-btn.active { background:${TEAL}; color:#fff; border-color:${TEAL}; }
-        .chip { background:${MUSTARD}; color:#fff; }
-        .ghost-btn { background:#fff; border:1px solid ${GRID}; color:${INK}; border-radius:2px; font-size:12px; padding:6px 10px; cursor:pointer; }
-        table { border-collapse: collapse; width:100%; }
-        th, td { border:1px dashed ${GRID}; padding:8px 10px; text-align:center; font-size:13px; }
-        th { background:#FBFAF6; font-weight:600; }
-        .stitch-mark::before { content:'∨ '; color:${TEAL}; }
-        .toast {
-          position:fixed; bottom:20px; left:50%; transform:translateX(-50%);
-          background:${INK}; color:#fff; padding:10px 18px; border-radius:4px; font-size:13px;
-          box-shadow:0 4px 14px rgba(0,0,0,0.2); z-index:50;
-        }
-      `}</style>
-
-      {toast && <div className="toast">{toast}</div>}
-
-      <div style={{ maxWidth: 780, margin: "0 auto", padding: "20px 16px 60px" }}>
-        <div style={{ marginBottom: 18 }}>
-          <div className="disp" style={{ fontSize: 22, fontWeight: 700 }}>게이지 도안 계산기</div>
-          <div style={{ fontSize: 13, color: "#6b6558", marginTop: 4 }}>
-            기준 도안 환산 또는 신체 치수 입력으로 사이즈별 콧수·단수를 바로 계산합니다.
-          </div>
+    <div style={{ maxWidth: 1080, margin: "0 auto", padding: "40px 24px 80px" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", marginBottom: 28, flexWrap: "wrap", gap: 16 }}>
+        <div>
+          <div className="eyebrow" style={{ marginBottom: 6 }}>Knit Pattern Tool</div>
+          <div className="headline">게이지 도안 계산기</div>
+          <div className="body-sm" style={{ color: "#55524a", marginTop: 4 }}>도안별 저장 · 게이지 자유 입력 · 저먼 숏로우 계산</div>
         </div>
-
-        {/* 도안 이름 + 저장/불러오기 */}
-        <div className="card" style={{ padding: 14, marginBottom: 16, display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
-          <input
-            type="text"
-            placeholder="도안 이름 (예: 브라보 풀오버)"
-            value={patternName}
-            onChange={(e) => setPatternName(e.target.value)}
-            style={{ maxWidth: 260 }}
-          />
-          <button className="ghost-btn" onClick={saveSettingsJSON}>💾 도안 저장 (JSON)</button>
-          <button className="ghost-btn" onClick={triggerLoad}>📂 도안 불러오기</button>
-          <input type="file" accept=".json" ref={fileInputRef} onChange={handleLoadFile} style={{ display: "none" }} />
+        <div style={{ display: "flex", gap: 8 }}>
+          <PillButton variant={activeTab === "calc" ? "selected" : "unselected"} onClick={() => setActiveTab("calc")}>계산기</PillButton>
+          <PillButton variant={activeTab === "shortrow" ? "selected" : "unselected"} onClick={() => setActiveTab("shortrow")}>저먼 숏로우</PillButton>
         </div>
+      </div>
 
-        <div style={{ display: "flex", gap: 0, marginBottom: 14 }}>
-          <button className={`seg-btn ${mode === "A" ? "active" : ""}`} style={{ borderRadius: "2px 0 0 2px" }} onClick={() => setMode("A")}>기준 도안 환산</button>
-          <button className={`seg-btn ${mode === "B" ? "active" : ""}`} style={{ borderRadius: "0 2px 2px 0", marginLeft: -1 }} onClick={() => setMode("B")}>신체 치수 계산</button>
-        </div>
-
-        <div style={{ display: "flex", gap: 6, marginBottom: 16, flexWrap: "wrap" }}>
-          {CONSTRUCTIONS.map((c) => (
-            <button key={c.id} className="seg-btn" style={{ borderRadius: 2, background: construction === c.id ? MUSTARD : "#fff", color: construction === c.id ? "#fff" : INK, borderColor: construction === c.id ? MUSTARD : GRID }} onClick={() => switchConstruction(c.id)}>{c.label}</button>
-          ))}
-        </div>
-
-        <div className="card" style={{ padding: 16, marginBottom: 16 }}>
-          {mode === "A" ? (
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
-              <GaugeInput label="기준 도안 게이지 (콧수 / 단수 / 기준 길이)" gauge={baseGauge} onChange={setBaseGauge} />
-              <GaugeInput label="내 게이지 (콧수 / 단수 / 기준 길이)" gauge={targetGauge} onChange={setTargetGauge} />
+      {activeTab === "calc" && (
+        <React.Fragment>
+          <div className="card" style={{ padding: 20, marginBottom: 20, display: "flex", gap: 12, alignItems: "flex-end", flexWrap: "wrap" }}>
+            <div style={{ flex: 1, minWidth: 200 }}>
+              <Field label="도안 이름"><input type="text" value={patternName} onChange={(e) => setPatternName(e.target.value)} placeholder="예: 브라보 풀오버" /></Field>
             </div>
-          ) : (
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
-              <GaugeInput label="내 게이지 (콧수 / 단수 / 기준 길이)" gauge={gaugeB} onChange={setGaugeB} />
-              <div>
-                <div style={{ fontSize: 12, color: "#6b6558", marginBottom: 6 }}>여유분 (cm, 가슴둘레에 적용)</div>
-                <input type="number" value={ease} onChange={(e) => setEase(e.target.value)} />
+            <PillButton variant="primary" onClick={saveJSON}>설정 저장 (JSON)</PillButton>
+            <PillButton variant="secondary" onClick={() => fileInputRef.current.click()}>설정 불러오기</PillButton>
+            <input ref={fileInputRef} type="file" accept="application/json" style={{ display: "none" }} onChange={loadJSON} />
+            <PillButton variant="secondary" onClick={newPattern}>새 도안</PillButton>
+          </div>
+
+          <div style={{ display: "flex", gap: 8, marginBottom: 20, flexWrap: "wrap", alignItems: "center" }}>
+            {CONSTRUCTIONS.map((c) => (
+              <PillButton key={c.id} variant={construction === c.id ? "selected" : "unselected"} onClick={() => setConstruction(c.id)}>{c.label}</PillButton>
+            ))}
+            <div style={{ width: 1, alignSelf: "stretch", background: C.hairline, margin: "0 8px" }} />
+            <PillButton variant={mode === "A" ? "selected" : "unselected"} onClick={() => setMode("A")}>기준 도안 스케일링</PillButton>
+            <PillButton variant={mode === "B" ? "selected" : "unselected"} onClick={() => setMode("B")}>신체 치수 기반</PillButton>
+          </div>
+
+          <div className="card" style={{ padding: 20, marginBottom: 20 }}>
+            {mode === "A" ? (
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 24 }}>
+                <GaugeInput label="기준 도안 게이지" gauge={baseGauge} onChange={setBaseGauge} />
+                <GaugeInput label="내 게이지" gauge={targetGauge} onChange={setTargetGauge} />
               </div>
+            ) : (
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 24 }}>
+                <GaugeInput label="내 게이지" gauge={gaugeB} onChange={setGaugeB} />
+                <Field label="여유분 (cm, 가슴둘레에 적용)"><input type="number" value={ease} onChange={(e) => setEase(e.target.value)} /></Field>
+              </div>
+            )}
+            <div style={{ display: "flex", gap: 20, marginTop: 18, alignItems: "center", flexWrap: "wrap" }}>
+              <label style={{ fontSize: 13, display: "flex", alignItems: "center", gap: 6 }}>
+                <input type="checkbox" checked={useEven} onChange={(e) => setUseEven(e.target.checked)} style={{ width: "auto" }} />
+                콧수 짝수로 반올림
+              </label>
+              <label style={{ fontSize: 13, display: "flex", alignItems: "center", gap: 6 }}>
+                패턴 반복수(콧수, 가슴둘레에 적용)
+                <input type="number" placeholder="예: 8" value={repeat} onChange={(e) => setRepeat(e.target.value)} style={{ width: 70 }} />
+              </label>
             </div>
-          )}
-
-          <div style={{ display: "flex", gap: 20, marginTop: 14, alignItems: "center", flexWrap: "wrap" }}>
-            <label style={{ fontSize: 13, display: "flex", alignItems: "center", gap: 6 }}>
-              <input type="checkbox" checked={useEven} onChange={(e) => setUseEven(e.target.checked)} style={{ width: "auto" }} />
-              콧수 짝수로 반올림
-            </label>
-            <label style={{ fontSize: 13, display: "flex", alignItems: "center", gap: 6 }}>
-              패턴 반복수(콧수)
-              <input type="number" placeholder="예: 8" value={repeat} onChange={(e) => setRepeat(e.target.value)} style={{ width: 70 }} />
-            </label>
+            <div className="caption" style={{ marginTop: 14, lineHeight: 1.7, textTransform: "none", fontSize: 11 }}>
+              가로(콧수)와 세로(단수)는 서로 다른 측정 길이를 가질 수 있어 각각 따로 입력합니다.<br />
+              {mode === "A" ? "아래 표에는 기준 도안의 실제 콧수/단수를 입력하세요." : "아래 표에는 원하는 신체 치수(cm)를 입력하세요."}
+            </div>
           </div>
-          <div style={{ fontSize: 11, color: "#8a8474", marginTop: 10 }}>
-            * 게이지는 "콧수/단수가 몇 cm 안에서 나오는지"를 직접 입력합니다. 10cm 기준이면 10, 4인치(약 10.16cm) 기준이면 10.16, 다른 길이면 그 값을 그대로 넣으면 됩니다.
-          </div>
-        </div>
 
-        <div style={{ marginBottom: 10, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-          <div className="disp stitch-mark" style={{ fontSize: 15, fontWeight: 700 }}>사이즈별 입력</div>
-          <button className="seg-btn" style={{ borderRadius: 2, fontSize: 12, padding: "5px 10px" }} onClick={addSize}>+ 사이즈 추가</button>
-        </div>
-
-        <div style={{ display: "flex", flexDirection: "column", gap: 10, marginBottom: 20 }}>
-          {currentSizes.map((s) => (
-            <div key={s.id} className="card" style={{ padding: 12 }}>
-              <div style={{ display: "flex", gap: 8, marginBottom: 8, alignItems: "center" }}>
-                <input type="text" placeholder="사이즈명 (예: Size 3)" value={s.name} onChange={(e) => updateSizeName(s.id, e.target.value)} style={{ maxWidth: 200 }} />
-                <button className="ghost-btn" onClick={() => duplicateSize(s.id)}>⧉ 복사</button>
-                <button onClick={() => removeSize(s.id)} style={{ background: "none", border: "none", color: "#a33", cursor: "pointer", fontSize: 12 }}>삭제</button>
-              </div>
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(140px, 1fr))", gap: 8 }}>
-                {fields.map((f) => (
-                  <div key={f.key}>
-                    <div style={{ fontSize: 11, color: "#6b6558", marginBottom: 3 }}>
-                      {mode === "A" ? `${f.label} (${f.unit === "sts" ? "콧수" : "단수"})` : f.cmLabel}
-                    </div>
-                    <input type="number" value={s.values[f.key]} onChange={(e) => updateSizeValue(s.id, f.key, e.target.value)} />
-                  </div>
+          <div className="card" style={{ padding: 20, marginBottom: 20, overflowX: "auto" }}>
+            <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: scanOpen ? 0 : 16 }}>
+              <PillButton variant="secondary" onClick={() => setScanOpen((v) => !v)}>
+                {scanOpen ? "자동 입력 패널 접기" : "PDF/이미지로 자동 입력"}
+              </PillButton>
+            </div>
+            {scanOpen && (
+              <ScanImportPanel
+                sizes={sizes}
+                fields={fields}
+                onClose={() => setScanOpen(false)}
+                onApply={(sizeId, values) => {
+                  setSizes((prev) => prev.map((s) => (s.id === sizeId ? { ...s, values: { ...s.values, ...values } } : s)));
+                }}
+              />
+            )}
+            <table>
+              <thead>
+                <tr>
+                  <th style={{ minWidth: 140 }}>사이즈</th>
+                  {fields.map((f) => <th key={f.key}>{mode === "A" ? f.label : f.cmLabel}</th>)}
+                  <th style={{ minWidth: 110 }}>동작</th>
+                </tr>
+              </thead>
+              <tbody>
+                {sizes.map((s) => (
+                  <tr key={s.id}>
+                    <td><input type="text" value={s.name} onChange={(e) => updateSizeName(s.id, e.target.value)} /></td>
+                    {fields.map((f) => (
+                      <td key={f.key}>
+                        <input type="number" value={s.values[f.key] ?? ""} onChange={(e) => updateSizeValue(s.id, f.key, e.target.value)} />
+                      </td>
+                    ))}
+                    <td>
+                      <div style={{ display: "flex", gap: 6, justifyContent: "center" }}>
+                        <PillButton variant="secondary" style={{ padding: "5px 12px", fontSize: 11 }} onClick={() => duplicateSize(s.id)}>복제</PillButton>
+                        <PillButton variant="secondary" style={{ padding: "5px 12px", fontSize: 11 }} onClick={() => removeSize(s.id)}>삭제</PillButton>
+                      </div>
+                    </td>
+                  </tr>
                 ))}
-              </div>
-            </div>
-          ))}
-        </div>
-
-        <div style={{ marginBottom: 10, display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8 }}>
-          <div className="disp stitch-mark" style={{ fontSize: 15, fontWeight: 700 }}>계산 결과</div>
-          <div style={{ display: "flex", gap: 8 }}>
-            <button className="ghost-btn" onClick={copyResultsToClipboard}>⧉ 결과표 복사</button>
-            <button className="chip" style={{ border: "none", borderRadius: 2, fontSize: 12, padding: "6px 12px", cursor: "pointer" }} onClick={downloadCSV}>CSV 다운로드</button>
+              </tbody>
+            </table>
+            <PillButton variant="primary" style={{ marginTop: 16 }} onClick={addSize}>+ 사이즈 추가</PillButton>
           </div>
-        </div>
 
-        <div className="card" style={{ padding: 12, overflowX: "auto" }}>
+          <div className="block" style={{ background: C.lime, padding: 32 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14, flexWrap: "wrap", gap: 10 }}>
+              <div className="card-title">계산 결과</div>
+              <PillButton variant="primary" onClick={copyResults}>결과 복사</PillButton>
+            </div>
+            <table style={{ background: "transparent" }}>
+              <thead>
+                <tr>
+                  <th style={{ borderBottom: "1px solid " + C.ink }}>사이즈</th>
+                  {fields.map((f) => <th key={f.key} style={{ borderBottom: "1px solid " + C.ink }}>{f.label} ({f.unit === "sts" ? "콧수" : "단수"})</th>)}
+                </tr>
+              </thead>
+              <tbody>
+                {results.map((r) => (
+                  <tr key={r.id}>
+                    <td style={{ borderBottom: "1px solid rgba(0,0,0,0.15)" }}>{r.name}</td>
+                    {fields.map((f) => <td key={f.key} style={{ borderBottom: "1px solid rgba(0,0,0,0.15)" }}>{r.values[f.key]}</td>)}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </React.Fragment>
+      )}
+
+      {activeTab === "shortrow" && <ShortRowCalculator />}
+
+      <FloatingCalculator />
+    </div>
+  );
+}
+
+function ShortRowCalculator() {
+  const [totalStitches, setTotalStitches] = useState("");
+  const [turnsPerShoulder, setTurnsPerShoulder] = useState("");
+
+  const result = useMemo(() => {
+    const total = Number(totalStitches);
+    const turns = Number(turnsPerShoulder);
+    if (!total || !turns || turns <= 0) return null;
+
+    const rightTotal = Math.ceil(total / 2);
+    const leftTotal = Math.floor(total / 2);
+
+    function distribute(sideTotal, n) {
+      const base = Math.floor(sideTotal / n);
+      const rem = sideTotal % n;
+      const arr = [];
+      for (let i = 0; i < n; i++) arr.push(base + (i < rem ? 1 : 0));
+      return arr;
+    }
+
+    const rightSteps = distribute(rightTotal, turns);
+    const leftSteps = distribute(leftTotal, turns);
+
+    const rows = [];
+    let cum = 0;
+    for (let i = 0; i < turns; i++) {
+      cum += rightSteps[i];
+      rows.push({ turn: rows.length + 1, side: "오른쪽 어깨", face: "겉면(RS)", stitches: rightSteps[i], cum });
+      cum += leftSteps[i];
+      rows.push({ turn: rows.length + 1, side: "왼쪽 어깨", face: "안면(WS)", stitches: leftSteps[i], cum });
+    }
+    return { rightTotal, leftTotal, rows };
+  }, [totalStitches, turnsPerShoulder]);
+
+  return (
+    <div className="block" style={{ background: C.lilac, padding: 32 }}>
+      <div className="card-title" style={{ marginBottom: 16 }}>저먼 숏로우 어깨 경사뜨기 계산</div>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 24, marginBottom: 6 }}>
+        <Field label="어깨 전체 콧수 (양쪽 합)"><input type="number" value={totalStitches} onChange={(e) => setTotalStitches(e.target.value)} placeholder="예: 40" /></Field>
+        <Field label="한쪽 어깨당 턴 수"><input type="number" value={turnsPerShoulder} onChange={(e) => setTurnsPerShoulder(e.target.value)} placeholder="예: 4" /></Field>
+      </div>
+      <div className="caption" style={{ marginTop: 12, lineHeight: 1.7, textTransform: "none", fontSize: 11 }}>
+        전체 콧수가 홀수면 남는 1콧수는 오른쪽 어깨에 배정됩니다.<br />
+        턴은 오른쪽(겉면) → 왼쪽(안면) 순서로 번갈아 진행됩니다.
+      </div>
+
+      {result && (
+        <div style={{ background: "#fff", borderRadius: 8, padding: 16, marginTop: 20 }}>
+          <div className="body-sm" style={{ marginBottom: 10 }}>
+            오른쪽 어깨 총 {result.rightTotal}콧수 · 왼쪽 어깨 총 {result.leftTotal}콧수
+          </div>
           <table>
             <thead>
-              <tr>
-                <th>사이즈</th>
-                {fields.map((f) => (<th key={f.key}>{f.label}<br /><span style={{ fontSize: 10, color: "#8a8474" }}>{f.unit === "sts" ? "콧수" : "단수"}</span></th>))}
-              </tr>
+              <tr><th>턴</th><th>어깨</th><th>면</th><th>이번 턴 콧수</th><th>누적 콧수</th></tr>
             </thead>
             <tbody>
-              {results.map((r) => (
-                <tr key={r.id}>
-                  <td style={{ fontWeight: 600 }}>{r.name || "-"}</td>
-                  {fields.map((f) => (<td key={f.key} className="mono">{r.out[f.key] == null ? "—" : r.out[f.key]}</td>))}
+              {result.rows.map((r) => (
+                <tr key={r.turn}>
+                  <td>{r.turn}</td><td>{r.side}</td><td>{r.face}</td><td>{r.stitches}</td><td>{r.cum}</td>
                 </tr>
               ))}
             </tbody>
           </table>
         </div>
+      )}
+    </div>
+  );
+}
 
-        <div style={{ fontSize: 11, color: "#8a8474", marginTop: 14, lineHeight: 1.6 }}>
-          * 셋인 슬리브의 진동 셰이핑, 래글런 감소 배치 등 세부 코 감소 진행은 스와치 확인 후 조정하는 것을 권장합니다.<br />
-          * 도안 저장은 브라우저에 남지 않고 파일(JSON)로 다운로드됩니다 — 도안별로 파일을 따로 보관하면 그 자체가 버전 관리가 됩니다. GitHub에 올리면 각 파일의 수정 이력도 자동으로 남습니다.
+/* ---------- 플로팅 계산기 (기록 저장/불러오기 포함) ---------- */
+const HISTORY_STORAGE_KEY = "knitCalcHistoryV1";
+
+function loadHistoryFromStorage() {
+  try {
+    const raw = window.localStorage.getItem(HISTORY_STORAGE_KEY);
+    return raw ? JSON.parse(raw) : [];
+  } catch (e) {
+    return [];
+  }
+}
+
+function FloatingCalculator() {
+  const [open, setOpen] = useState(false);
+  const [showHistory, setShowHistory] = useState(false);
+  const [display, setDisplay] = useState("0");
+  const [previous, setPrevious] = useState(null);
+  const [operator, setOperator] = useState(null);
+  const [waitingForNew, setWaitingForNew] = useState(false);
+  const [history, setHistory] = useState(() => loadHistoryFromStorage());
+  const historyFileRef = useRef(null);
+
+  useEffect(() => {
+    try { window.localStorage.setItem(HISTORY_STORAGE_KEY, JSON.stringify(history)); } catch (e) {}
+  }, [history]);
+
+  function compute(a, b, op) {
+    switch (op) {
+      case "+": return a + b;
+      case "-": return a - b;
+      case "×": return a * b;
+      case "÷": return b === 0 ? 0 : a / b;
+      default: return b;
+    }
+  }
+  function formatResult(n) {
+    if (!isFinite(n)) return "0";
+    const rounded = Math.round(n * 1e8) / 1e8;
+    return String(rounded);
+  }
+  function inputDigit(d) {
+    if (waitingForNew) { setDisplay(d); setWaitingForNew(false); }
+    else setDisplay(display === "0" ? d : display + d);
+  }
+  function inputDecimal() {
+    if (waitingForNew) { setDisplay("0."); setWaitingForNew(false); return; }
+    if (!display.includes(".")) setDisplay(display + ".");
+  }
+  function clearAll() {
+    setDisplay("0"); setPrevious(null); setOperator(null); setWaitingForNew(false);
+  }
+  function backspace() {
+    if (waitingForNew) return;
+    setDisplay(display.length > 1 ? display.slice(0, -1) : "0");
+  }
+  function toggleSign() {
+    setDisplay(formatResult(parseFloat(display) * -1));
+  }
+  function inputPercent() {
+    setDisplay(formatResult(parseFloat(display) / 100));
+  }
+  function chooseOperator(nextOp) {
+    const inputValue = parseFloat(display);
+    if (previous == null) {
+      setPrevious(inputValue);
+    } else if (operator && !waitingForNew) {
+      const result = compute(previous, inputValue, operator);
+      setDisplay(formatResult(result));
+      setPrevious(result);
+    }
+    setWaitingForNew(true);
+    setOperator(nextOp);
+  }
+  function handleEquals() {
+    if (operator == null || previous == null) return;
+    const inputValue = parseFloat(display);
+    const result = compute(previous, inputValue, operator);
+    const expr = formatResult(previous) + " " + operator + " " + formatResult(inputValue);
+    setHistory((prev) => [{ id: nextId(), expr, result: formatResult(result), ts: Date.now() }, ...prev].slice(0, 200));
+    setDisplay(formatResult(result));
+    setPrevious(null);
+    setOperator(null);
+    setWaitingForNew(true);
+  }
+  function reuseHistoryResult(item) {
+    setDisplay(item.result);
+    setPrevious(null);
+    setOperator(null);
+    setWaitingForNew(true);
+  }
+  function clearHistory() {
+    if (!confirm("계산 기록을 모두 지울까요?")) return;
+    setHistory([]);
+  }
+  function exportHistory() {
+    const blob = new Blob([JSON.stringify(history, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "calc-history.json";
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+  function importHistory(e) {
+    const file = e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      try {
+        const data = JSON.parse(ev.target.result);
+        if (Array.isArray(data)) setHistory(data);
+        else alert("올바른 기록 파일이 아닙니다.");
+      } catch (err) {
+        alert("파일을 읽는 중 오류가 발생했습니다.");
+      }
+    };
+    reader.readAsText(file);
+    e.target.value = "";
+  }
+
+  const calcBtnStyle = (opts) => ({
+    padding: "12px 0", borderRadius: 8, border: "1px solid " + C.hairline, fontSize: 15, fontWeight: 480,
+    background: opts && opts.accent ? C.ink : opts && opts.op ? C.surfaceSoft : "#fff",
+    color: opts && opts.accent ? "#fff" : C.ink,
+    gridColumn: opts && opts.wide ? "span 2" : "span 1",
+    width: "100%",
+  });
+  const calcBtn = (label, onClick, opts) => (
+    <button key={label} onClick={onClick} style={calcBtnStyle(opts)}>{label}</button>
+  );
+
+  if (!open) {
+    return (
+      <button
+        onClick={() => setOpen(true)}
+        title="계산기 열기"
+        style={{
+          position: "fixed", right: 20, bottom: 20, width: 52, height: 52, borderRadius: "50%",
+          background: C.ink, color: "#fff", border: "none", fontSize: 20, boxShadow: "0 6px 18px rgba(0,0,0,0.25)",
+          zIndex: 1000,
+        }}
+      >🧮</button>
+    );
+  }
+
+  return (
+    <div
+      className="card"
+      style={{
+        position: "fixed", right: 20, bottom: 20, width: 240, padding: 14,
+        boxShadow: "0 10px 28px rgba(0,0,0,0.2)", zIndex: 1000, background: "#fff",
+      }}
+    >
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+        <div className="caption">계산기</div>
+        <div style={{ display: "flex", gap: 4 }}>
+          <IconButton onClick={() => setShowHistory((v) => !v)} style={{ width: 28, height: 28, fontSize: 12 }}>🕘</IconButton>
+          <IconButton onClick={() => setOpen(false)} style={{ width: 28, height: 28, fontSize: 12 }}>✕</IconButton>
         </div>
       </div>
+
+      {showHistory ? (
+        <div>
+          <div style={{ maxHeight: 220, overflowY: "auto", border: "1px solid " + C.hairlineSoft, borderRadius: 8, marginBottom: 10 }}>
+            {history.length === 0 ? (
+              <div className="caption" style={{ padding: 12, textTransform: "none", color: "#8a8474" }}>저장된 계산 기록이 없습니다.</div>
+            ) : history.map((h) => (
+              <div key={h.id} onClick={() => reuseHistoryResult(h)}
+                style={{ padding: "8px 10px", borderBottom: "1px solid " + C.hairlineSoft, cursor: "pointer" }}>
+                <div style={{ fontSize: 11, color: "#8a8474" }}>{h.expr} =</div>
+                <div style={{ fontSize: 15, fontWeight: 600 }}>{h.result}</div>
+              </div>
+            ))}
+          </div>
+          <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+            <PillButton variant="secondary" style={{ fontSize: 11, padding: "6px 10px" }} onClick={exportHistory}>내보내기</PillButton>
+            <PillButton variant="secondary" style={{ fontSize: 11, padding: "6px 10px" }} onClick={() => historyFileRef.current.click()}>가져오기</PillButton>
+            <PillButton variant="secondary" style={{ fontSize: 11, padding: "6px 10px" }} onClick={clearHistory}>기록 지우기</PillButton>
+            <input ref={historyFileRef} type="file" accept="application/json" style={{ display: "none" }} onChange={importHistory} />
+          </div>
+        </div>
+      ) : (
+        <React.Fragment>
+          <div style={{
+            textAlign: "right", fontSize: 22, fontWeight: 600, padding: "10px 8px", marginBottom: 8,
+            background: C.surfaceSoft, borderRadius: 8, overflowX: "auto", whiteSpace: "nowrap",
+          }}>{display}</div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 6 }}>
+            {calcBtn("C", clearAll)}
+            {calcBtn("±", toggleSign)}
+            {calcBtn("%", inputPercent)}
+            {calcBtn("÷", () => chooseOperator("÷"), { op: true })}
+            {calcBtn("7", () => inputDigit("7"))}
+            {calcBtn("8", () => inputDigit("8"))}
+            {calcBtn("9", () => inputDigit("9"))}
+            {calcBtn("×", () => chooseOperator("×"), { op: true })}
+            {calcBtn("4", () => inputDigit("4"))}
+            {calcBtn("5", () => inputDigit("5"))}
+            {calcBtn("6", () => inputDigit("6"))}
+            {calcBtn("-", () => chooseOperator("-"), { op: true })}
+            {calcBtn("1", () => inputDigit("1"))}
+            {calcBtn("2", () => inputDigit("2"))}
+            {calcBtn("3", () => inputDigit("3"))}
+            {calcBtn("+", () => chooseOperator("+"), { op: true })}
+            {calcBtn("0", () => inputDigit("0"), { wide: true })}
+            {calcBtn(".", inputDecimal)}
+            {calcBtn("⌫", backspace)}
+            <div style={{ gridColumn: "span 4" }}>{calcBtn("=", handleEquals, { accent: true })}</div>
+          </div>
+        </React.Fragment>
+      )}
     </div>
   );
 }
 
 const root = ReactDOM.createRoot(document.getElementById("root"));
-root.render(<KnitCalculator />);
+root.render(<App />);
 </script>
 </body>
 </html>
