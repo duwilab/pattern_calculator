@@ -409,6 +409,8 @@ function App() {
   const [quickUnit, setQuickUnit] = useState("sts");
   const [quickCmValue, setQuickCmValue] = useState("");
   const [quickCmUnit, setQuickCmUnit] = useState("sts");
+  const [gradingBaseId, setGradingBaseId] = useState("");
+  const [gradingIncrements, setGradingIncrements] = useState({ chest: "", totalLength: "", armholeDepth: "" });
   const fileInputRef = useRef(null);
 
   const fields = fieldsFor(construction);
@@ -454,6 +456,26 @@ function App() {
       ...s,
       values: { ...s.values, ["goal_" + field.key + "_count"]: val, ["goal_" + field.key + "_cm"]: cmVal },
     } : s)));
+  }
+
+  function applyGrading() {
+    const effectiveBaseId = gradingBaseId || (sizes[0] && sizes[0].id);
+    const baseIndex = sizes.findIndex((s) => s.id === effectiveBaseId);
+    if (baseIndex === -1) { alert("기준 사이즈를 먼저 선택해주세요."); return; }
+    const baseSize = sizes[baseIndex];
+    setSizes((prev) => prev.map((s, i) => {
+      if (i === baseIndex) return s;
+      const offset = i - baseIndex;
+      const newValues = { ...s.values };
+      TARGET_FIELDS.forEach((f) => {
+        const incr = Number(gradingIncrements[f.key]) || 0;
+        const baseCm = Number(baseSize.values["goal_" + f.key + "_cm"]) || 0;
+        const newCm = Math.round((baseCm + incr * offset) * 10) / 10;
+        newValues["goal_" + f.key + "_cm"] = String(newCm);
+        newValues["goal_" + f.key + "_count"] = String(countFromCm(newCm, f.axis, myGauge, f.unit, useEven));
+      });
+      return { ...s, values: newValues };
+    }));
   }
 
   const quickResult = useMemo(() => {
@@ -689,6 +711,36 @@ function App() {
             <div className="caption" style={{ marginTop: 14, lineHeight: 1.7, textTransform: "none", fontSize: 11 }}>
               가로(콧수)와 세로(단수)는 서로 다른 측정 길이를 가질 수 있어 각각 따로 입력합니다.<br />
               {mode === "A" ? "아래 표에는 기준 도안의 실제 콧수/단수를 입력하세요." : "아래 표에는 원하는 신체 치수(cm)를 입력하세요."}
+            </div>
+          </div>
+
+          <div className="card" style={{ padding: 20, marginBottom: 20 }}>
+            <div className="card-title" style={{ marginBottom: 4 }}>그레이딩 (기준 사이즈 → 사이즈당 증분으로 자동 확장)</div>
+            <div className="caption" style={{ marginBottom: 14, textTransform: "none", fontSize: 11, color: "#8a8474" }}>
+              기준 사이즈의 목표 cm를 먼저 정확히 입력한 뒤, 사이즈당 증분(cm)을 넣고 적용하면 다른 사이즈들의 목표 cm·콧수/단수가 자동으로 채워져요. (아래 "사이즈별 목표 치수" 표 값 기준)
+            </div>
+            <div style={{ display: "flex", gap: 16, flexWrap: "wrap", alignItems: "flex-end" }}>
+              <div style={{ minWidth: 160 }}>
+                <Field label="기준 사이즈">
+                  <select value={gradingBaseId || (sizes[0] && sizes[0].id) || ""} onChange={(e) => setGradingBaseId(e.target.value)}
+                    style={{ width: "100%", padding: "10px 12px", border: "1px solid " + C.hairline, borderRadius: 8, fontSize: 14, background: "#fff" }}>
+                    {sizes.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+                  </select>
+                </Field>
+              </div>
+              {TARGET_FIELDS.map((f) => (
+                <div key={f.key} style={{ width: 150 }}>
+                  <Field label={f.label + " 증분(cm)"}>
+                    <input type="number" value={gradingIncrements[f.key]}
+                      onChange={(e) => setGradingIncrements((prev) => ({ ...prev, [f.key]: e.target.value }))}
+                      placeholder="예: 4" />
+                  </Field>
+                </div>
+              ))}
+              <PillButton variant="primary" onClick={applyGrading}>그레이딩 적용</PillButton>
+            </div>
+            <div className="caption" style={{ marginTop: 12, textTransform: "none", fontSize: 11, color: "#8a8474" }}>
+              사이즈 목록 순서(위→아래)를 기준으로, 기준 사이즈보다 아래(큰 사이즈)에는 증분이 더해지고 위(작은 사이즈)에는 빠져요. 기준 사이즈 자신의 값은 바뀌지 않아요.
             </div>
           </div>
 
